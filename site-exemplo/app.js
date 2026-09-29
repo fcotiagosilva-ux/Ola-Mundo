@@ -399,10 +399,11 @@ async function loadDashboard() {
       method:'POST', body:JSON.stringify({p_barbershop_id:shop.id})
     });
     const summary = Array.isArray(result) ? result[0] : result;
-    metrics[0].textContent = currency(summary?.revenue_month);
-    metrics[1].textContent = Number(summary?.appointments_month || 0).toLocaleString('pt-BR');
-    metrics[2].textContent = Number(summary?.active_clients_month || 0).toLocaleString('pt-BR');
-    metrics[3].textContent = currency(summary?.average_ticket_month);
+    metrics[0].textContent = currency(summary?.revenue_today);
+    metrics[1].textContent = currency(summary?.revenue_month);
+    metrics[2].textContent = Number(summary?.appointments_month || 0).toLocaleString('pt-BR');
+    metrics[3].textContent = Number(summary?.active_clients_month || 0).toLocaleString('pt-BR');
+    metrics[4].textContent = currency(summary?.average_ticket_month);
     shopList.innerHTML = `<div class="shop-row"><span class="shop-logo">BK</span><div><b>${escapeText(shop.name)}</b><small>Métricas reais do Supabase</small></div><strong>${currency(summary?.revenue_month)}<small> faturados no mês</small></strong><span class="status active">Ativa</span></div>`;
     document.querySelector('.chart-panel .chart').innerHTML = '<p class="empty-state">O gráfico será preenchido conforme os atendimentos forem concluídos.</p>';
     document.querySelectorAll('.metric-card .positive,.metric-card .negative,.metric-card .sparkline').forEach(element => element.remove());
