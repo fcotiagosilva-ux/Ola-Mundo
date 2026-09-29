@@ -225,13 +225,13 @@ begin
     raise exception 'BARBEARIA_INDISPONIVEL';
   end if;
 
-  update public.profiles
-  set full_name = coalesce(v_invite.invited_name, full_name),
+  update public.profiles as target_profile
+  set full_name = coalesce(v_invite.invited_name, target_profile.full_name),
       role = case
-        when role = 'super_admin' then role
+        when target_profile.role = 'super_admin' then target_profile.role
         else v_invite.role
       end
-  where id = auth.uid();
+  where target_profile.id = auth.uid();
 
   insert into public.barbershop_members(barbershop_id, user_id)
   values(v_invite.barbershop_id, auth.uid())
