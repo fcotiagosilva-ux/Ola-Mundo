@@ -84,7 +84,7 @@
   opacity: .45;
 }
 
-.confirm-appointment,
+.complete-appointment,
 .cancel-appointment {
   display: inline-block;
   margin: 2px 6px 2px 0;
@@ -94,7 +94,7 @@
   white-space: nowrap;
 }
 
-.confirm-appointment {
+.complete-appointment {
   background: #1c362b;
   color: var(--green);
 }

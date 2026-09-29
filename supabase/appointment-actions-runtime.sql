@@ -1,4 +1,4 @@
--- Ações protegidas de confirmação e cancelamento de agendamentos.
+-- Ações protegidas de conclusão e cancelamento de agendamentos.
 -- Execute após operations-runtime.sql.
 
 drop function if exists public.cancel_my_appointment(uuid);
@@ -70,7 +70,8 @@ begin
 end;
 $$;
 
-create or replace function public.confirm_my_appointment(p_appointment_id uuid)
+drop function if exists public.confirm_my_appointment(uuid);
+create or replace function public.complete_my_appointment(p_appointment_id uuid)
 returns uuid
 language plpgsql
 security definer
@@ -78,7 +79,7 @@ set search_path = public, pg_temp
 as $$
 declare
   v_appointment public.appointments;
-  v_confirmed_id uuid;
+  v_completed_id uuid;
 begin
   if auth.uid() is null then
     raise exception 'LOGIN_NECESSARIO';
@@ -102,25 +103,29 @@ begin
         or (actor.role = 'manager' and public.is_member(v_appointment.barbershop_id))
       )
   ) then
-    raise exception 'SEM_PERMISSAO_PARA_CONFIRMAR';
+    raise exception 'SEM_PERMISSAO_PARA_CONCLUIR';
   end if;
 
-  if v_appointment.status <> 'pending' then
-    raise exception 'SOMENTE_AGENDAMENTOS_PENDENTES_PODEM_SER_CONFIRMADOS';
+  if v_appointment.status not in ('pending', 'confirmed') then
+    raise exception 'SOMENTE_ATENDIMENTOS_ATIVOS_PODEM_SER_CONCLUIDOS';
+  end if;
+
+  if v_appointment.ends_at > now() then
+    raise exception 'ATENDIMENTO_AINDA_NAO_FINALIZADO';
   end if;
 
   update public.appointments a
-  set status = 'confirmed'
+  set status = 'completed'
   where a.id = p_appointment_id
-  returning a.id into v_confirmed_id;
+  returning a.id into v_completed_id;
 
-  return v_confirmed_id;
+  return v_completed_id;
 end;
 $$;
 
 revoke all on function public.cancel_my_appointment(uuid) from public, anon;
 grant execute on function public.cancel_my_appointment(uuid) to authenticated;
-revoke all on function public.confirm_my_appointment(uuid) from public, anon;
-grant execute on function public.confirm_my_appointment(uuid) to authenticated;
+revoke all on function public.complete_my_appointment(uuid) from public, anon;
+grant execute on function public.complete_my_appointment(uuid) to authenticated;
 
 notify pgrst, 'reload schema';

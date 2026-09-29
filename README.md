@@ -17,7 +17,7 @@ Para produção, execute o schema no SQL Editor do Supabase. O frontend está co
 1. Execute `supabase/public-booking-read-policies.sql` (caso ainda não esteja aplicado).
 2. Execute `supabase/booking-runtime.sql` para criar RPCs de profissionais ativos, horários disponíveis e confirmação segura. O script também repara perfis ausentes de usuários Auth existentes, sem conceder privilégios.
 3. Execute `supabase/operations-runtime.sql` para ativar agenda, métricas protegidas, relatórios de serviços e cancelamento por regra de antecedência. O script solicita a atualização do cache de schema da API ao terminar.
-4. Execute `supabase/appointment-actions-runtime.sql` para ativar confirmação de agendamentos por gestores e cancelamento com retorno de identificador UUID.
+4. Execute `supabase/appointment-actions-runtime.sql` para ativar conclusão de atendimentos por gestores e cancelamento com retorno de identificador UUID.
 5. Execute `supabase/tenant-onboarding-runtime.sql` para habilitar criação protegida de unidades, convites de gestor/profissional de uso único e o link de agendamento por unidade.
 6. Execute `supabase/catalog-management-runtime.sql` para permitir cadastro protegido de serviços e configuração semanal de horários dos profissionais.
 7. Em **Cadastros**, selecione uma unidade e use **Adicionar serviço** para informar preço, duração e profissionais habilitados. Use **Horários dos profissionais** para definir um período de funcionamento por dia da semana.
@@ -36,7 +36,7 @@ Se a API retornar `Could not find the function ... in the schema cache` após ap
 - Para confirmação confiável de e-mail em produção, configure SMTP próprio em **Project Settings → Authentication → SMTP Settings** e teste signup/reset. Não coloque senha SMTP ou `service_role` no repositório.
 - Antes do lançamento, execute também `supabase/operations-runtime.sql`; ele ativa lista de agendamentos, cancelamento dentro das regras, métricas e relatórios com acesso restrito.
 - Execute `supabase/tenant-onboarding-runtime.sql` após as demais migrações para liberar os controles de onboarding protegidos por perfil.
-- Execute `supabase/appointment-actions-runtime.sql` depois de `operations-runtime.sql` para habilitar confirmação e cancelamento pelo painel.
+- Execute `supabase/appointment-actions-runtime.sql` depois de `operations-runtime.sql` para habilitar conclusão e cancelamento pelo painel. Um atendimento só pode ser concluído após o horário de término previsto.
 - Execute `supabase/catalog-management-runtime.sql` depois do onboarding para liberar a gestão de catálogo e horários por profissionais.
 
 ## Ativação do ambiente

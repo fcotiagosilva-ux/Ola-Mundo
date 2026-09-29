@@ -405,11 +405,14 @@ function renderAppointments() {
   const canManageAppointments = ['manager','super_admin'].includes(profileRecord?.role);
   appointmentTable.innerHTML = result.map(item => {
     const canCancel = item.can_cancel && ['pending','confirmed'].includes(item.status);
+    const canComplete = canManageAppointments
+      && ['pending','confirmed'].includes(item.status)
+      && new Date(item.ends_at).getTime() <= Date.now();
     const statusClass = item.status === 'confirmed' || item.status === 'completed' ? 'confirmed'
       : item.status === 'cancelled' ? 'paused' : 'pending';
     const actions = [
-      canManageAppointments && item.status === 'pending'
-        ? `<button class="confirm-appointment" data-appointment-id="${escapeText(item.id)}">Confirmar</button>` : '',
+      canComplete
+        ? `<button class="complete-appointment" data-appointment-id="${escapeText(item.id)}">Concluído</button>` : '',
       canCancel
         ? `<button class="cancel-appointment" data-appointment-id="${escapeText(item.id)}">Cancelar</button>` : ''
     ].filter(Boolean).join(' ');
@@ -1093,7 +1096,7 @@ bookingForm.addEventListener('submit', async event => {
 });
 
 appointmentTable.addEventListener('click', async event => {
-  const button = event.target.closest('.cancel-appointment,.confirm-appointment');
+  const button = event.target.closest('.cancel-appointment,.complete-appointment');
   if (!button) return;
   const appointment = appointmentsById.get(button.dataset.appointmentId);
   const appointmentId = button.dataset.appointmentId;
@@ -1101,15 +1104,15 @@ appointmentTable.addEventListener('click', async event => {
     showToast('Identificador de agendamento inválido. Atualize a lista e tente novamente.', true);
     return;
   }
-  const isConfirm = button.classList.contains('confirm-appointment');
-  const actionText = isConfirm ? 'Confirmar' : 'Cancelar';
-  if (!window.confirm(`${actionText} o agendamento de ${appointment.client_name} em ${localDate(appointment.starts_at)} às ${localTime(appointment.starts_at)}?`)) return;
+  const isComplete = button.classList.contains('complete-appointment');
+  const actionText = isComplete ? 'Marcar como concluído' : 'Cancelar';
+  if (!window.confirm(`${actionText} o atendimento de ${appointment.client_name} em ${localDate(appointment.starts_at)} às ${localTime(appointment.starts_at)}?`)) return;
   button.disabled = true;
   try {
-    await supabaseRequest(`rpc/${isConfirm ? 'confirm_my_appointment' : 'cancel_my_appointment'}`, {
+    await supabaseRequest(`rpc/${isComplete ? 'complete_my_appointment' : 'cancel_my_appointment'}`, {
       method:'POST', body:JSON.stringify({p_appointment_id:appointmentId})
     });
-    showToast(isConfirm ? 'Agendamento confirmado.' : 'Agendamento cancelado.');
+    showToast(isComplete ? 'Atendimento marcado como concluído.' : 'Agendamento cancelado.');
     await loadAppointments();
   } catch (error) {
     showToast(error.message, true);
