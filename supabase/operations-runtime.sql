@@ -1,6 +1,12 @@
 -- Painel operacional e cancelamento autenticado.
 -- Execute no SQL Editor após schema.sql e booking-runtime.sql.
 
+grant select on public.profiles to authenticated;
+drop policy if exists "users read own profile" on public.profiles;
+create policy "users read own profile"
+  on public.profiles for select
+  using (id = auth.uid());
+
 drop function if exists public.list_my_barbershops();
 
 create or replace function public.list_my_barbershops()

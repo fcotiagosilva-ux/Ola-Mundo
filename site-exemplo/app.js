@@ -118,6 +118,46 @@ function saveSession(value) {
   else clearOperationalData();
 }
 
+async function handleAuthCallback() {
+  if (!window.location.hash) return false;
+  const params = new URLSearchParams(window.location.hash.slice(1));
+  const errorDescription = params.get('error_description');
+  const accessToken = params.get('access_token');
+  const refreshToken = params.get('refresh_token');
+  const type = params.get('type');
+  if (!errorDescription && (!accessToken || !refreshToken || type !== 'signup')) return false;
+
+  window.history.replaceState({}, '', `${window.location.pathname}${window.location.search}`);
+  if (errorDescription) {
+    setAuthMode('signin');
+    openAuth();
+    setFeedback(authFeedback, `Não foi possível confirmar o e-mail: ${errorDescription}`, true);
+    return true;
+  }
+
+  try {
+    const user = await request(`${authBase}/user`, {}, accessToken);
+    saveSession({
+      access_token:accessToken,
+      refresh_token:refreshToken,
+      token_type:params.get('token_type') || 'bearer',
+      expires_in:Number(params.get('expires_in') || 3600),
+      user
+    });
+    if (pendingInviteToken) {
+      await processPendingInvite();
+    } else {
+      showToast('E-mail confirmado. Sua conta está conectada.');
+    }
+  } catch (error) {
+    setAuthMode('signin');
+    openAuth();
+    setFeedback(authFeedback, `E-mail confirmado, mas não foi possível iniciar a sessão: ${error.message}`, true);
+    console.error('Falha ao concluir a sessão após confirmar o e-mail.', error);
+  }
+  return true;
+}
+
 async function request(url, options = {}, token = session?.access_token || config.supabaseAnonKey) {
   const response = await fetch(url, {
     ...options,
@@ -898,7 +938,14 @@ document.querySelector('#agenda-date').min = localToday();
 document.querySelector('#agenda-date').value = localToday();
 updateAuthButton();
 updateIdentity();
-if (session?.access_token) loadOperationalData();
-else clearOperationalData();
+handleAuthCallback().then(hasCallback => {
+  if (!hasCallback && session?.access_token) loadOperationalData();
+  else if (!hasCallback) clearOperationalData();
+}).catch(error => {
+  setAuthMode('signin');
+  openAuth();
+  setFeedback(authFeedback, `Não foi possível concluir a confirmação do e-mail: ${error.message}`, true);
+  console.error('Falha ao processar o retorno de confirmação do e-mail.', error);
+});
 updateIdentity();
 checkConnection();
