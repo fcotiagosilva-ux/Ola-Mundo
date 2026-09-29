@@ -256,6 +256,8 @@ function updateAuthButton() {
 }
 
 function updateIdentity() {
+  const accountEmail = session?.user?.email?.trim().toLowerCase();
+  document.body.classList.toggle('barberking-background', accountEmail === 'barberking380@gmail.com');
   const roleLabels = {client:'Cliente',professional:'Profissional',manager:'Gestor',super_admin:'Super administrador'};
   const role = roleLabels[profileRecord?.role] || (session ? 'Conta autenticada' : 'Não conectado');
   const accountName = profileRecord?.full_name || session?.user?.user_metadata?.full_name || session?.user?.email || 'Visitante';

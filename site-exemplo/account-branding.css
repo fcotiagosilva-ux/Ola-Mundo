@@ -1,0 +1,11 @@
+body.barberking-background {
+  background:
+    linear-gradient(rgba(11, 13, 16, .76), rgba(11, 13, 16, .82)),
+    url("assets/tiaguim-background.png") center / cover fixed no-repeat;
+}
+
+@media (max-width: 700px) {
+  body.barberking-background {
+    background-attachment: scroll;
+  }
+}
