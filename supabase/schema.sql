@@ -28,6 +28,12 @@ create table public.barbershop_members (
   user_id uuid references public.profiles(id) on delete cascade,
   primary key (barbershop_id, user_id)
 );
+create table public.client_barbershop_links (
+  client_id uuid not null references public.profiles(id) on delete cascade,
+  barbershop_id uuid not null references public.barbershops(id) on delete cascade,
+  linked_at timestamptz not null default now(),
+  primary key (client_id, barbershop_id)
+);
 create table public.services (
   id uuid primary key default gen_random_uuid(),
   barbershop_id uuid not null references public.barbershops(id) on delete cascade,
@@ -126,6 +132,7 @@ end; $$;
 alter table public.barbershops enable row level security;
 alter table public.profiles enable row level security;
 alter table public.barbershop_members enable row level security;
+alter table public.client_barbershop_links enable row level security;
 alter table public.services enable row level security;
 alter table public.professionals enable row level security;
 alter table public.appointments enable row level security;

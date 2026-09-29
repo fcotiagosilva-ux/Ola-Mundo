@@ -38,6 +38,7 @@ let profileRecord = null;
 let managedShops = [];
 let pendingInviteToken = new URLSearchParams(window.location.search).get('invite');
 let requestedShopSlug = new URLSearchParams(window.location.search).get('barbershop');
+let linkedRequestedShop = null;
 let inviteInProgress = false;
 
 function readSession() {
@@ -116,7 +117,12 @@ function saveSession(value) {
   else localStorage.removeItem('barberly-session');
   updateAuthButton();
   updateIdentity();
-  if (value) loadOperationalData();
+  if (value) {
+    loadOperationalData().catch(error => {
+      showToast(`Não foi possível carregar os dados da conta: ${error.message}`, true);
+      console.error('Falha ao carregar os dados da conta autenticada.', error);
+    });
+  }
   else clearOperationalData();
 }
 
@@ -149,6 +155,9 @@ async function handleAuthCallback() {
     if (pendingInviteToken) {
       await processPendingInvite();
     } else {
+      await loadIdentity();
+      await ensureRequestedClientShopLink();
+      if (bookingModal.classList.contains('open')) await loadShops();
       showToast('E-mail confirmado. Sua conta está conectada.');
     }
   } catch (error) {
@@ -323,7 +332,23 @@ async function loadOperationalData() {
     clearOperationalData();
     return;
   }
-  await Promise.all([loadIdentity(), loadAppointments(), loadDashboard()]);
+  await loadIdentity();
+  await ensureRequestedClientShopLink();
+  await Promise.all([loadAppointments(), loadDashboard()]);
+}
+
+async function ensureRequestedClientShopLink() {
+  const linkKey = `${session?.user?.id}:${requestedShopSlug}`;
+  if (profileRecord?.role !== 'client' || !requestedShopSlug || linkedRequestedShop === linkKey) return;
+  const result = await supabaseRequest('rpc/claim_client_barbershop_link', {
+    method:'POST',
+    body:JSON.stringify({p_slug:requestedShopSlug})
+  });
+  const linkedShop = Array.isArray(result) ? result[0] : result;
+  if (!linkedShop?.id) {
+    throw new Error('A barbearia deste link não está disponível.');
+  }
+  linkedRequestedShop = linkKey;
 }
 
 async function loadDashboard() {
@@ -865,7 +890,20 @@ async function loadShops() {
   bookingShop.disabled = true;
   setFeedback(bookingFeedback, 'Carregando barbearias...');
   try {
-    shops = await supabaseRequest('barbershops?select=id,name,slug&status=eq.active&order=name');
+    if (session?.access_token) {
+      await loadIdentity();
+      await ensureRequestedClientShopLink();
+    }
+    if (profileRecord?.role === 'client') {
+      const clientLinks = await supabaseRequest('rpc/list_my_client_barbershops', {
+        method:'POST', body:'{}'
+      });
+      shops = clientLinks.length
+        ? clientLinks.filter(shop => shop.status === 'active')
+        : await supabaseRequest('barbershops?select=id,name,slug&status=eq.active&order=name');
+    } else {
+      shops = await supabaseRequest('barbershops?select=id,name,slug&status=eq.active&order=name');
+    }
     bookingShop.replaceChildren(...shops.map(shop => new Option(shop.name, shop.id)));
     if (requestedShopSlug) {
       const requestedShop = shops.find(shop => shop.slug === requestedShopSlug);
@@ -1027,6 +1065,11 @@ document.querySelector('#auth-form').addEventListener('submit', async event => {
     if (result.access_token) {
       saveSession(result);
       const inviteClaimed = pendingInviteToken ? await processPendingInvite() : true;
+      if (inviteClaimed && !pendingInviteToken) {
+        await loadIdentity();
+        await ensureRequestedClientShopLink();
+        if (bookingModal.classList.contains('open')) await loadShops();
+      }
       if (inviteClaimed) closeModal(authModal);
       setFeedback(bookingFeedback, 'Conta conectada. Selecione um horário e confirme o agendamento.');
       if (inviteClaimed) showToast('Login realizado.');
@@ -1134,7 +1177,7 @@ document.querySelector('#agenda-date').value = localToday();
 updateAuthButton();
 updateIdentity();
 handleAuthCallback().then(hasCallback => {
-  if (!hasCallback && session?.access_token) loadOperationalData();
+  if (!hasCallback && session?.access_token) return loadOperationalData();
   else if (!hasCallback) clearOperationalData();
 }).catch(error => {
   setAuthMode('signin');
