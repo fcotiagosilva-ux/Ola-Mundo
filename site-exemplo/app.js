@@ -10,6 +10,8 @@ const authModal = document.querySelector('#auth-modal');
 const shopModal = document.querySelector('#shop-modal');
 const inviteModal = document.querySelector('#invite-modal');
 const clientLinkModal = document.querySelector('#client-link-modal');
+const serviceModal = document.querySelector('#service-modal');
+const hoursModal = document.querySelector('#hours-modal');
 const bookingFeedback = document.querySelector('#booking-feedback');
 const authFeedback = document.querySelector('#auth-feedback');
 const bookingShop = document.querySelector('#booking-shop');
@@ -262,6 +264,9 @@ function updateIdentity() {
   document.querySelector('.profile b').textContent = name;
   document.querySelector('.profile small').textContent = role;
   document.querySelector('#add-shop').hidden = profileRecord?.role !== 'super_admin';
+  const canManageCatalog = ['manager','super_admin'].includes(profileRecord?.role);
+  document.querySelector('#add-service').hidden = !canManageCatalog;
+  document.querySelector('#manage-hours').hidden = !canManageCatalog;
 }
 
 async function loadIdentity() {
@@ -447,6 +452,55 @@ async function loadShopDirectory() {
   }
 }
 
+async function loadShopProfessionals(barbershopId) {
+  return supabaseRequest('rpc/list_active_professionals', {
+    method:'POST',
+    body:JSON.stringify({p_barbershop_id:barbershopId})
+  });
+}
+
+function renderScheduleDays(rows = []) {
+  const existing = new Map(rows.map(row => [Number(row.weekday), row]));
+  const days = [
+    ['Domingo',0],['Segunda-feira',1],['Terça-feira',2],['Quarta-feira',3],
+    ['Quinta-feira',4],['Sexta-feira',5],['Sábado',6]
+  ];
+  document.querySelector('#schedule-days').innerHTML = days.map(([name, weekday]) => {
+    const row = existing.get(weekday);
+    const start = row?.start_time?.slice(0,5) || '09:00';
+    const end = row?.end_time?.slice(0,5) || '18:00';
+    return `<div class="schedule-day"><label class="schedule-enabled"><input type="checkbox" data-weekday="${weekday}" ${row ? 'checked' : ''}><span>${name}</span></label><label>Abre<input type="time" data-start="${weekday}" value="${start}" ${row ? 'required' : 'disabled'}></label><label>Fecha<input type="time" data-end="${weekday}" value="${end}" ${row ? 'required' : 'disabled'}></label></div>`;
+  }).join('');
+}
+
+async function loadProfessionalSchedule(professionalId) {
+  const feedback = document.querySelector('#schedule-feedback');
+  const submit = document.querySelector('#schedule-form button[type="submit"]');
+  if (!professionalId) {
+    renderScheduleDays();
+    submit.disabled = true;
+    setFeedback(feedback, 'Selecione um profissional.');
+    return;
+  }
+  try {
+    const rows = await supabaseRequest(
+      `professional_availability?select=weekday,start_time,end_time&professional_id=eq.${encodeURIComponent(professionalId)}&order=weekday,start_time`
+    );
+    const weekdayCounts = new Map();
+    rows.forEach(row => weekdayCounts.set(row.weekday, (weekdayCounts.get(row.weekday) || 0) + 1));
+    if ([...weekdayCounts.values()].some(count => count > 1)) {
+      throw new Error('Este profissional possui mais de um período em algum dia. A tela permite um período por dia; ajuste esses intervalos antes de salvar.');
+    }
+    renderScheduleDays(rows);
+    submit.disabled = false;
+    setFeedback(feedback, '');
+  } catch (error) {
+    renderScheduleDays();
+    submit.disabled = true;
+    setFeedback(feedback, `Não foi possível carregar os horários: ${error.message}`, true);
+  }
+}
+
 async function loadRegisters() {
   const table = document.querySelector('#register-table');
   const shopSelect = document.querySelector('#register-shop');
@@ -512,6 +566,133 @@ document.querySelectorAll('[data-register-type]').forEach(button => button.addEv
   document.querySelectorAll('[data-register-type]').forEach(tab => tab.classList.toggle('active', tab === button));
   loadRegisters();
 }));
+
+document.querySelector('#add-service').addEventListener('click', async () => {
+  const shopId = document.querySelector('#register-shop').value;
+  if (!shopId) {
+    showToast('Selecione uma barbearia antes de cadastrar o serviço.', true);
+    return;
+  }
+  const form = document.querySelector('#service-form');
+  const professionalList = document.querySelector('#service-professionals');
+  form.reset();
+  setFeedback(document.querySelector('#service-feedback'), 'Carregando profissionais...');
+  professionalList.replaceChildren();
+  openModal(serviceModal);
+  try {
+    const professionals = await loadShopProfessionals(shopId);
+    professionalList.innerHTML = professionals.length
+      ? professionals.map(professional => `<label class="selection-option"><input type="checkbox" name="service-professional" value="${escapeText(professional.id)}"><span>${escapeText(professional.full_name)}</span></label>`).join('')
+      : '<p class="empty-state">Cadastre um profissional nesta unidade antes de adicionar serviços.</p>';
+    setFeedback(document.querySelector('#service-feedback'), '');
+  } catch (error) {
+    setFeedback(document.querySelector('#service-feedback'), `Não foi possível carregar os profissionais: ${error.message}`, true);
+  }
+  form.dataset.shopId = shopId;
+});
+
+document.querySelector('#service-form').addEventListener('submit', async event => {
+  event.preventDefault();
+  const form = event.currentTarget;
+  const submit = form.querySelector('button[type="submit"]');
+  const professionalIds = [...form.querySelectorAll('input[name="service-professional"]:checked')].map(input => input.value);
+  if (!professionalIds.length) {
+    setFeedback(document.querySelector('#service-feedback'), 'Selecione pelo menos um profissional habilitado para atender este serviço.', true);
+    return;
+  }
+  submit.disabled = true;
+  setFeedback(document.querySelector('#service-feedback'), 'Salvando serviço...');
+  try {
+    await supabaseRequest('rpc/create_barbershop_service', {
+      method:'POST',
+      body:JSON.stringify({
+        p_barbershop_id:form.dataset.shopId,
+        p_name:document.querySelector('#service-name').value.trim(),
+        p_price:Number(document.querySelector('#service-price').value),
+        p_duration_minutes:Number(document.querySelector('#service-duration').value),
+        p_professional_ids:professionalIds
+      })
+    });
+    closeModal(serviceModal);
+    registerType = 'services';
+    document.querySelectorAll('[data-register-type]').forEach(tab => tab.classList.toggle('active', tab.dataset.registerType === 'services'));
+    await loadRegisters();
+    showToast('Serviço cadastrado e vinculado aos profissionais selecionados.');
+  } catch (error) {
+    setFeedback(document.querySelector('#service-feedback'), `Não foi possível salvar o serviço: ${error.message}`, true);
+  } finally {
+    submit.disabled = false;
+  }
+});
+
+document.querySelector('#manage-hours').addEventListener('click', async () => {
+  const shopId = document.querySelector('#register-shop').value;
+  if (!shopId) {
+    showToast('Selecione uma barbearia antes de configurar horários.', true);
+    return;
+  }
+  const select = document.querySelector('#schedule-professional');
+  document.querySelector('#schedule-form button[type="submit"]').disabled = true;
+  select.replaceChildren();
+  renderScheduleDays();
+  setFeedback(document.querySelector('#schedule-feedback'), 'Carregando profissionais...');
+  openModal(hoursModal);
+  try {
+    const professionals = await loadShopProfessionals(shopId);
+    select.replaceChildren(...professionals.map(professional => new Option(professional.full_name, professional.id)));
+    if (!professionals.length) {
+      setFeedback(document.querySelector('#schedule-feedback'), 'Nenhum profissional ativo nesta barbearia.');
+      return;
+    }
+    await loadProfessionalSchedule(select.value);
+  } catch (error) {
+    setFeedback(document.querySelector('#schedule-feedback'), `Não foi possível carregar os profissionais: ${error.message}`, true);
+  }
+});
+
+document.querySelector('#schedule-professional').addEventListener('change', event => {
+  loadProfessionalSchedule(event.currentTarget.value);
+});
+
+document.querySelector('#schedule-days').addEventListener('change', event => {
+  const checkbox = event.target.closest('input[data-weekday]');
+  if (!checkbox) return;
+  const weekday = checkbox.dataset.weekday;
+  const start = document.querySelector(`[data-start="${weekday}"]`);
+  const end = document.querySelector(`[data-end="${weekday}"]`);
+  start.disabled = !checkbox.checked;
+  end.disabled = !checkbox.checked;
+  start.required = checkbox.checked;
+  end.required = checkbox.checked;
+});
+
+document.querySelector('#schedule-form').addEventListener('submit', async event => {
+  event.preventDefault();
+  const form = event.currentTarget;
+  const submit = form.querySelector('button[type="submit"]');
+  const schedule = [...form.querySelectorAll('input[data-weekday]:checked')].map(checkbox => ({
+    weekday:Number(checkbox.dataset.weekday),
+    start_time:document.querySelector(`[data-start="${checkbox.dataset.weekday}"]`).value,
+    end_time:document.querySelector(`[data-end="${checkbox.dataset.weekday}"]`).value
+  }));
+  submit.disabled = true;
+  setFeedback(document.querySelector('#schedule-feedback'), 'Salvando disponibilidade semanal...');
+  try {
+    await supabaseRequest('rpc/save_professional_weekly_schedule', {
+      method:'POST',
+      body:JSON.stringify({
+        p_professional_id:document.querySelector('#schedule-professional').value,
+        p_schedule:schedule
+      })
+    });
+    showToast('Horários semanais atualizados.');
+    await loadProfessionalSchedule(document.querySelector('#schedule-professional').value);
+  } catch (error) {
+    setFeedback(document.querySelector('#schedule-feedback'), `Não foi possível salvar os horários: ${error.message}`, true);
+  } finally {
+    submit.disabled = false;
+  }
+});
 
 document.querySelector('#add-shop').addEventListener('click', () => {
   document.querySelector('#shop-form').reset();

@@ -1,0 +1,101 @@
+.register-actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+.selection-field {
+  min-width: 0;
+  margin: 0;
+  padding: 12px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+}
+
+.selection-field legend {
+  padding: 0 5px;
+  color: var(--muted);
+}
+
+.selection-list {
+  display: grid;
+  gap: 8px;
+  max-height: 180px;
+  overflow-y: auto;
+}
+
+.selection-option,
+.schedule-enabled {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+}
+
+.selection-option input,
+.schedule-enabled input {
+  width: 17px;
+  height: 17px;
+  accent-color: var(--lime);
+}
+
+.schedule-modal {
+  width: min(680px, 100%);
+}
+
+.schedule-days {
+  display: grid;
+  gap: 8px;
+  margin-top: 18px;
+}
+
+.schedule-day {
+  display: grid;
+  grid-template-columns: minmax(140px, 1fr) 1fr 1fr;
+  align-items: center;
+  gap: 10px;
+  padding: 9px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--surface2);
+}
+
+.schedule-day label:not(.schedule-enabled) {
+  display: grid;
+  gap: 5px;
+  color: var(--muted);
+  font-size: 11px;
+}
+
+.schedule-day input[type="time"] {
+  width: 100%;
+  min-width: 0;
+  padding: 7px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: var(--surface);
+}
+
+.schedule-day input:disabled {
+  opacity: .45;
+}
+
+@media (max-width: 640px) {
+  .register-actions {
+    width: 100%;
+    justify-content: stretch;
+  }
+
+  .register-actions button {
+    flex: 1;
+    white-space: normal;
+  }
+
+  .schedule-day {
+    grid-template-columns: 1fr 1fr;
+  }
+
+  .schedule-enabled {
+    grid-column: 1 / -1;
+  }
+}
