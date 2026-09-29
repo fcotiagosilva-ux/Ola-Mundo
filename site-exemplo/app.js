@@ -1,0 +1,674 @@
+const config = window.BARBERLY_CONFIG;
+const projectUrl = config.supabaseUrl.replace(/\/rest\/v1\/?$/, '');
+const apiBase = `${projectUrl}/rest/v1`;
+const authBase = `${projectUrl}/auth/v1`;
+const statusElement = document.querySelector('#supabase-status');
+const toast = document.querySelector('#toast');
+const bookingForm = document.querySelector('#booking-form');
+const bookingModal = document.querySelector('#booking-modal');
+const authModal = document.querySelector('#auth-modal');
+const bookingFeedback = document.querySelector('#booking-feedback');
+const authFeedback = document.querySelector('#auth-feedback');
+const bookingShop = document.querySelector('#booking-shop');
+const bookingProfessional = document.querySelector('#booking-professional');
+const bookingService = document.querySelector('#booking-service');
+const bookingDate = document.querySelector('#booking-date');
+const bookingTime = document.querySelector('#booking-time');
+const bookingSubmit = document.querySelector('#booking-submit');
+const authButton = document.querySelector('#auth-trigger');
+const appointmentTable = document.querySelector('#appointment-table');
+const agendaItems = document.querySelector('#agenda-items');
+const agendaMessage = document.querySelector('#agenda-message');
+const labels = {overview:'Visão geral',agenda:'Agenda',shops:'Barbearias',registers:'Cadastros',appointments:'Agendamentos',reports:'Relatórios'};
+const appointmentsById = new Map();
+let session = readSession();
+let shops = [];
+let loadedAppointments = [];
+let selectedAppointmentSlot = null;
+let authMode = 'signin';
+let registerType = 'professionals';
+let registerShops = [];
+let registerRows = [];
+let profileRecord = null;
+
+function readSession() {
+  try {
+    return JSON.parse(localStorage.getItem('barberly-session') || 'null');
+  } catch {
+    return null;
+  }
+}
+
+function saveSession(value) {
+  session = value;
+  if (!value) profileRecord = null;
+  if (value) localStorage.setItem('barberly-session', JSON.stringify(value));
+  else localStorage.removeItem('barberly-session');
+  updateAuthButton();
+  updateIdentity();
+  if (value) loadOperationalData();
+  else clearOperationalData();
+}
+
+async function request(url, options = {}, token = session?.access_token || config.supabaseAnonKey) {
+  const response = await fetch(url, {
+    ...options,
+    headers: {
+      apikey: config.supabaseAnonKey,
+      Authorization: `Bearer ${token}`,
+      'Content-Type': 'application/json',
+      ...(options.headers || {})
+    }
+  });
+  const body = response.status === 204 ? null : await response.json().catch(() => null);
+  if (!response.ok) {
+    const message = body?.msg || body?.message || `Supabase respondeu HTTP ${response.status}`;
+    const details = body?.details ? ` (${body.details})` : '';
+    const hint = body?.hint ? ` Dica: ${body.hint}` : '';
+    const error = new Error(`${message}${details}${hint}`);
+    error.status = response.status;
+    throw error;
+  }
+  return body;
+}
+
+async function supabaseRequest(path, options = {}) {
+  try {
+    return await request(`${apiBase}/${path}`, options);
+  } catch (error) {
+    if (error.status !== 401 || !session?.refresh_token) throw error;
+    const refreshed = await request(`${authBase}/token?grant_type=refresh_token`, {
+      method:'POST', body:JSON.stringify({refresh_token:session.refresh_token})
+    }, config.supabaseAnonKey);
+    saveSession(refreshed);
+    return request(`${apiBase}/${path}`, options);
+  }
+}
+
+function escapeText(value) {
+  return String(value ?? '').replace(/[&<>"']/g, char => ({
+    '&':'&amp;', '<':'&lt;', '>':'&gt;', '"':'&quot;', "'":'&#39;'
+  })[char]);
+}
+
+function currency(value) {
+  return Number(value || 0).toLocaleString('pt-BR', {style:'currency',currency:'BRL'});
+}
+
+function localDate(dateValue) {
+  return new Intl.DateTimeFormat('pt-BR', {
+    timeZone:'America/Sao_Paulo', day:'2-digit', month:'short', year:'numeric'
+  }).format(new Date(dateValue));
+}
+
+function localTime(dateValue) {
+  return new Intl.DateTimeFormat('pt-BR', {
+    timeZone:'America/Sao_Paulo', hour:'2-digit', minute:'2-digit', hour12:false
+  }).format(new Date(dateValue));
+}
+
+function localDay(dateValue) {
+  const parts = new Intl.DateTimeFormat('en-CA', {
+    timeZone:'America/Sao_Paulo', year:'numeric', month:'2-digit', day:'2-digit'
+  }).formatToParts(new Date(dateValue));
+  const values = Object.fromEntries(parts.map(part => [part.type, part.value]));
+  return `${values.year}-${values.month}-${values.day}`;
+}
+
+function localToday() {
+  return localDay(new Date());
+}
+
+function showToast(message, isError = false) {
+  toast.textContent = `${isError ? '!' : '✓'} ${message}`;
+  toast.classList.toggle('error-toast', isError);
+  toast.classList.add('show');
+  window.setTimeout(() => toast.classList.remove('show'), 4000);
+}
+
+function setFeedback(element, message, isError = false) {
+  element.textContent = message;
+  element.classList.toggle('feedback-error', isError);
+}
+
+function updateAuthButton() {
+  authButton.textContent = session?.user?.email ? 'Sair' : 'Entrar';
+  bookingSubmit.textContent = session ? 'Confirmar agendamento' : 'Entrar para agendar';
+}
+
+function updateIdentity() {
+  const name = profileRecord?.full_name || session?.user?.user_metadata?.full_name || session?.user?.email || 'Visitante';
+  const roleLabels = {client:'Cliente',professional:'Profissional',manager:'Gestor',super_admin:'Super administrador'};
+  const role = roleLabels[profileRecord?.role] || (session ? 'Conta autenticada' : 'Não conectado');
+  const initials = name.split(/\s+/).slice(0,2).map(part => part[0]).join('').toUpperCase();
+  document.querySelector('#welcome-heading').innerHTML = `${escapeText(session ? name : 'Visão da operação')} <span>✦</span>`;
+  document.querySelector('#current-date').textContent = new Intl.DateTimeFormat('pt-BR', {
+    timeZone:'America/Sao_Paulo', weekday:'long', day:'2-digit', month:'long', year:'numeric'
+  }).format(new Date()).toLocaleUpperCase('pt-BR');
+  document.querySelector('#workspace-name').textContent = name;
+  document.querySelector('#workspace-role').textContent = role;
+  document.querySelector('#workspace-avatar').textContent = initials || '?';
+  document.querySelector('#profile-avatar').textContent = initials || '?';
+  document.querySelector('.profile b').textContent = name;
+  document.querySelector('.profile small').textContent = role;
+}
+
+async function loadIdentity() {
+  if (!session?.user?.id) {
+    profileRecord = null;
+    updateIdentity();
+    return;
+  }
+  try {
+    const rows = await supabaseRequest(`profiles?select=full_name,role&id=eq.${encodeURIComponent(session.user.id)}&limit=1`);
+    profileRecord = rows[0] || null;
+    updateIdentity();
+  } catch (error) {
+    profileRecord = null;
+    updateIdentity();
+    console.error('Falha ao carregar o perfil autenticado.', error);
+  }
+}
+
+function updateIdentity() {
+  const name = session?.user?.user_metadata?.full_name || session?.user?.email || 'Visão da operação';
+  document.querySelector('#welcome-heading').innerHTML = `${escapeText(name)} <span>✦</span>`;
+  document.querySelector('#current-date').textContent = new Intl.DateTimeFormat('pt-BR', {
+    timeZone:'America/Sao_Paulo', weekday:'long', day:'2-digit', month:'long', year:'numeric'
+  }).format(new Date()).toLocaleUpperCase('pt-BR');
+  const profile = document.querySelector('.profile');
+  profile.querySelector('b').textContent = session?.user?.user_metadata?.full_name || session?.user?.email || 'Visitante';
+  profile.querySelector('small').textContent = session ? 'Conta autenticada' : 'Não conectado';
+}
+
+async function checkConnection() {
+  try {
+    await supabaseRequest('barbershops?select=id&limit=1');
+    statusElement.textContent = 'Supabase conectado';
+    statusElement.classList.add('connected');
+  } catch (error) {
+    statusElement.textContent = 'Supabase indisponível';
+    statusElement.classList.add('error');
+    console.error('Falha ao consultar o Supabase.', error);
+  }
+}
+
+function clearOperationalData() {
+  loadedAppointments = [];
+  appointmentsById.clear();
+  appointmentTable.innerHTML = '<tr><td colspan="7">Entre na sua conta para consultar agendamentos reais.</td></tr>';
+  agendaItems.replaceChildren();
+  agendaMessage.textContent = 'Entre com uma conta da equipe para consultar a agenda.';
+  document.querySelectorAll('.metric-card strong').forEach(element => { element.textContent = '—'; });
+  document.querySelector('#upcoming-list').innerHTML = '<p class="empty-state">Entre para ver os próximos agendamentos.</p>';
+  document.querySelector('.chart-panel .chart').innerHTML = '<p class="empty-state">Entre com uma conta da equipe para consultar métricas reais.</p>';
+  document.querySelector('.bottom-grid .shop-list').innerHTML = '<p class="empty-state">Entre com uma conta da equipe para consultar suas unidades.</p>';
+  document.querySelector('.report-cards').innerHTML = '<article class="report-card"><strong>Relatórios protegidos</strong><p>Entre com uma conta vinculada a uma barbearia para consultar valores reais.</p></article>';
+  document.querySelectorAll('.metric-card .positive,.metric-card .negative,.metric-card .sparkline').forEach(element => element.remove());
+}
+
+async function loadOperationalData() {
+  if (!session?.access_token) {
+    clearOperationalData();
+    return;
+  }
+  await Promise.all([loadIdentity(), loadAppointments(), loadDashboard()]);
+}
+
+async function loadDashboard() {
+  const metrics = document.querySelectorAll('.metric-card strong');
+  try {
+    const managedShops = await supabaseRequest('rpc/list_my_barbershops', {method:'POST',body:'{}'});
+    const shopList = document.querySelector('.bottom-grid .shop-list');
+    if (!managedShops.length) {
+      metrics.forEach(element => { element.textContent = '—'; });
+      shopList.innerHTML = '<p class="empty-state">Sua conta não tem uma barbearia vinculada para exibir métricas.</p>';
+      document.querySelector('.chart-panel .chart').innerHTML = '<p class="empty-state">As análises serão exibidas quando houver atendimentos registrados.</p>';
+      document.querySelector('.report-cards').innerHTML = '<article class="report-card"><strong>Relatórios indisponíveis</strong><p>Esta conta não está vinculada a uma equipe de barbearia.</p></article>';
+      return;
+    }
+    const shop = managedShops[0];
+    const result = await supabaseRequest('rpc/barbershop_dashboard_metrics', {
+      method:'POST', body:JSON.stringify({p_barbershop_id:shop.id})
+    });
+    const summary = Array.isArray(result) ? result[0] : result;
+    metrics[0].textContent = currency(summary?.revenue_month);
+    metrics[1].textContent = Number(summary?.appointments_month || 0).toLocaleString('pt-BR');
+    metrics[2].textContent = Number(summary?.active_clients_month || 0).toLocaleString('pt-BR');
+    metrics[3].textContent = currency(summary?.average_ticket_month);
+    shopList.innerHTML = `<div class="shop-row"><span class="shop-logo">BK</span><div><b>${escapeText(shop.name)}</b><small>Métricas reais do Supabase</small></div><strong>${currency(summary?.revenue_month)}<small> faturados no mês</small></strong><span class="status active">Ativa</span></div>`;
+    document.querySelector('.chart-panel .chart').innerHTML = '<p class="empty-state">O gráfico será preenchido conforme os atendimentos forem concluídos.</p>';
+    document.querySelectorAll('.metric-card .positive,.metric-card .negative,.metric-card .sparkline').forEach(element => element.remove());
+    await loadReports(shop.id);
+  } catch (error) {
+    metrics.forEach(element => { element.textContent = '—'; });
+    document.querySelector('.bottom-grid .shop-list').innerHTML = '<p class="empty-state">Métricas financeiras disponíveis somente para gestores da unidade.</p>';
+    document.querySelector('.chart-panel .chart').innerHTML = '<p class="empty-state">Sua conta não tem permissão para acessar o relatório financeiro.</p>';
+    document.querySelector('.report-cards').innerHTML = '<article class="report-card"><strong>Acesso restrito</strong><p>Relatórios financeiros são restritos a gestores e super administradores.</p></article>';
+    console.error('Falha ao carregar as métricas operacionais.', error);
+  }
+}
+
+async function loadReports(shopId) {
+  try {
+    const rows = await supabaseRequest('rpc/barbershop_service_report', {
+      method:'POST', body:JSON.stringify({p_barbershop_id:shopId})
+    });
+    const completed = rows.filter(row => Number(row.completed_count) > 0);
+    document.querySelector('.report-cards').innerHTML = completed.length
+      ? completed.slice(0,6).map(row => `<article class="report-card"><small>Serviço concluído no mês</small><strong>${escapeText(row.service_name)}</strong><p>${Number(row.completed_count)} atendimento(s)<b>${currency(row.completed_revenue)}</b></p></article>`).join('')
+      : '<article class="report-card"><small>Relatório do mês</small><strong>Sem atendimentos concluídos</strong><p>Os valores aparecerão quando serviços forem marcados como concluídos.</p></article>';
+  } catch (error) {
+    document.querySelector('.report-cards').innerHTML = `<article class="report-card"><strong>Relatório indisponível</strong><p>${escapeText(error.message)}</p></article>`;
+  }
+}
+
+async function loadAppointments() {
+  if (!session?.access_token) return;
+  try {
+    loadedAppointments = await supabaseRequest('rpc/list_my_appointments', {method:'POST',body:'{}'});
+    appointmentsById.clear();
+    loadedAppointments.forEach(item => appointmentsById.set(item.id, item));
+    renderAppointments();
+    renderAgenda();
+    renderUpcoming();
+  } catch (error) {
+    appointmentTable.innerHTML = `<tr><td colspan="7">${escapeText(error.message)}</td></tr>`;
+    agendaMessage.textContent = `Não foi possível carregar a agenda: ${error.message}`;
+    console.error('Falha ao carregar agendamentos.', error);
+  }
+}
+
+function renderAppointments() {
+  const status = document.querySelector('#appointment-status-filter').value;
+  const query = document.querySelector('#appointment-search').value.trim().toLocaleLowerCase('pt-BR');
+  const result = loadedAppointments.filter(item => (!status || item.status === status)
+    && (!query || [item.client_name,item.professional_name,item.service_name]
+      .some(value => value?.toLocaleLowerCase('pt-BR').includes(query))));
+  if (!result.length) {
+    appointmentTable.innerHTML = '<tr><td colspan="7">Nenhum agendamento encontrado.</td></tr>';
+    return;
+  }
+  const statusLabels = {pending:'Pendente',confirmed:'Confirmado',completed:'Concluído',cancelled:'Cancelado',no_show:'Não compareceu'};
+  appointmentTable.innerHTML = result.map(item => {
+    const canCancel = item.can_cancel && ['pending','confirmed'].includes(item.status);
+    const statusClass = item.status === 'confirmed' || item.status === 'completed' ? 'confirmed'
+      : item.status === 'cancelled' ? 'paused' : 'pending';
+    return `<tr><td><b>${escapeText(item.client_name)}</b></td><td>${localDate(item.starts_at)} · ${localTime(item.starts_at)}</td><td>${escapeText(item.professional_name)}</td><td>${escapeText(item.service_name)}</td><td><span class="status ${statusClass}">${statusLabels[item.status] || escapeText(item.status)}</span></td><td>${currency(item.price)}</td><td>${canCancel ? `<button class="cancel-appointment" data-appointment-id="${escapeText(item.id)}">Cancelar</button>` : ''}</td></tr>`;
+  }).join('');
+}
+
+function renderAgenda() {
+  const date = document.querySelector('#agenda-date').value;
+  const dayItems = loadedAppointments.filter(item => localDay(item.starts_at) === date
+    && ['pending','confirmed'].includes(item.status));
+  agendaItems.innerHTML = dayItems.map(item => `<div class="agenda-booking"><b>${localTime(item.starts_at)}–${localTime(item.ends_at)}</b><span>${escapeText(item.client_name)} · ${escapeText(item.service_name)}</span><small>${escapeText(item.professional_name)} · ${currency(item.price)}</small></div>`).join('');
+  agendaMessage.textContent = dayItems.length ? `${dayItems.length} atendimento(s) neste dia.` : 'Nenhum atendimento agendado para esta data.';
+}
+
+function renderUpcoming() {
+  const future = loadedAppointments
+    .filter(item => ['pending','confirmed'].includes(item.status) && new Date(item.starts_at) >= new Date())
+    .slice(0,4);
+  document.querySelector('#upcoming-list').innerHTML = future.length
+    ? future.map(item => `<div class="appointment"><span class="time">${localTime(item.starts_at)}<small>${localDate(item.starts_at)}</small></span><i class="line"></i><div><b>${escapeText(item.client_name)}</b><p>${escapeText(item.service_name)} · ${escapeText(item.professional_name)}</p></div></div>`).join('')
+    : '<p class="empty-state">Nenhum próximo agendamento.</p>';
+}
+
+async function loadShopDirectory() {
+  const container = document.querySelector('.shop-cards');
+  try {
+    const rows = await supabaseRequest('barbershops?select=id,name,slug,phone,city,status&status=eq.active&order=name');
+    const query = document.querySelector('#shop-search').value.trim().toLocaleLowerCase('pt-BR');
+    const filtered = rows.filter(shop => !query || `${shop.name} ${shop.city || ''}`.toLocaleLowerCase('pt-BR').includes(query));
+    document.querySelector('#shop-count').textContent = `${filtered.length} unidade(s) ativa(s)`;
+    container.innerHTML = filtered.length
+      ? filtered.map(shop => `<article class="shop-card"><div class="shop-card-head"><span class="shop-logo">${escapeText(shop.name.slice(0,2).toUpperCase())}</span><span class="status active">Ativa</span></div><h3>${escapeText(shop.name)}</h3><p>${escapeText(shop.city || 'Cidade não informada')}${shop.phone ? ` · ${escapeText(shop.phone)}` : ''}</p><div class="shop-stats"><span><b>/${escapeText(shop.slug)}</b><small>link público da unidade</small></span></div></article>`).join('')
+      : '<article class="shop-card"><p>Nenhuma barbearia ativa encontrada.</p></article>';
+  } catch (error) {
+    container.innerHTML = `<article class="shop-card"><p>${escapeText(error.message)}</p></article>`;
+  }
+}
+
+async function loadRegisters() {
+  const table = document.querySelector('#register-table');
+  const shopSelect = document.querySelector('#register-shop');
+  table.innerHTML = '<tr><td>Carregando...</td></tr>';
+  try {
+    if (!registerShops.length) {
+      registerShops = await supabaseRequest('barbershops?select=id,name&status=eq.active&order=name');
+      shopSelect.replaceChildren(...registerShops.map(shop => new Option(shop.name, shop.id)));
+    }
+    if (!shopSelect.value) {
+      table.innerHTML = '<tr><td>Nenhuma barbearia ativa.</td></tr>';
+      return;
+    }
+    registerRows = registerType === 'professionals'
+      ? await supabaseRequest('rpc/list_active_professionals', {method:'POST',body:JSON.stringify({p_barbershop_id:shopSelect.value})})
+      : await supabaseRequest(`services?select=id,name,price,duration_minutes,active&barbershop_id=eq.${encodeURIComponent(shopSelect.value)}&active=eq.true&order=name`);
+    renderRegisters();
+  } catch (error) {
+    table.innerHTML = `<tr><td>${escapeText(error.message)}</td></tr>`;
+  }
+}
+
+function renderRegisters() {
+  const table = document.querySelector('#register-table');
+  const query = document.querySelector('#register-search').value.trim().toLocaleLowerCase('pt-BR');
+  const filtered = registerRows.filter(row => {
+    const searchable = registerType === 'professionals' ? row.full_name : row.name;
+    return (searchable || '').toLocaleLowerCase('pt-BR').includes(query);
+  });
+  if (registerType === 'professionals') {
+    document.querySelector('#register-head').innerHTML = '<tr><th>PROFISSIONAL</th><th>STATUS</th></tr>';
+    table.innerHTML = filtered.length
+      ? filtered.map(row => `<tr><td><span class="avatar barber-a">${escapeText(row.full_name.slice(0,2).toUpperCase())}</span><b>${escapeText(row.full_name)}</b></td><td><span class="status active">Ativo</span></td></tr>`).join('')
+      : '<tr><td colspan="2">Nenhum profissional ativo nesta barbearia.</td></tr>';
+  } else {
+    document.querySelector('#register-head').innerHTML = '<tr><th>SERVIÇO</th><th>DURAÇÃO</th><th>PREÇO</th><th>STATUS</th></tr>';
+    table.innerHTML = filtered.length
+      ? filtered.map(row => `<tr><td><b>${escapeText(row.name)}</b></td><td>${Number(row.duration_minutes)} min</td><td>${currency(row.price)}</td><td><span class="status active">Ativo</span></td></tr>`).join('')
+      : '<tr><td colspan="4">Nenhum serviço ativo nesta barbearia.</td></tr>';
+  }
+}
+
+function showView(view) {
+  document.querySelectorAll('.view').forEach(element => element.classList.toggle('active-view', element.id === view));
+  document.querySelectorAll('.nav-item').forEach(element => element.classList.toggle('active', element.dataset.view === view));
+  document.querySelector('#breadcrumb').textContent = labels[view] || 'Visão geral';
+  document.querySelector('.sidebar').classList.remove('open');
+  if (view === 'agenda' || view === 'appointments') loadAppointments();
+  if (view === 'reports') loadDashboard();
+  if (view === 'shops') loadShopDirectory();
+  if (view === 'registers') loadRegisters();
+}
+
+document.querySelectorAll('[data-view]').forEach(button => button.addEventListener('click', () => showView(button.dataset.view)));
+document.querySelector('.mobile-menu').addEventListener('click', () => document.querySelector('.sidebar').classList.toggle('open'));
+document.querySelector('#shop-search').addEventListener('input', loadShopDirectory);
+document.querySelector('#register-shop').addEventListener('change', loadRegisters);
+document.querySelector('#register-search').addEventListener('input', renderRegisters);
+document.querySelectorAll('[data-register-type]').forEach(button => button.addEventListener('click', () => {
+  registerType = button.dataset.registerType;
+  document.querySelectorAll('[data-register-type]').forEach(tab => tab.classList.toggle('active', tab === button));
+  loadRegisters();
+}));
+
+function openModal(element) {
+  element.classList.add('open');
+  element.setAttribute('aria-hidden', 'false');
+}
+function closeModal(element) {
+  element.classList.remove('open');
+  element.setAttribute('aria-hidden', 'true');
+}
+function openBooking() {
+  openModal(bookingModal);
+  setFeedback(bookingFeedback, '');
+  loadShops();
+}
+function openAuth() {
+  setFeedback(authFeedback, '');
+  openModal(authModal);
+}
+
+document.querySelectorAll('#open-booking,#open-booking-agenda,#open-booking-list').forEach(button => button.addEventListener('click', openBooking));
+document.querySelectorAll('.modal-close,.modal-close-btn').forEach(button => button.addEventListener('click', () => {
+  closeModal(bookingModal);
+  closeModal(authModal);
+}));
+document.querySelectorAll('.modal-backdrop').forEach(backdrop => backdrop.addEventListener('click', event => {
+  if (event.target === backdrop) closeModal(backdrop);
+}));
+document.addEventListener('keydown', event => {
+  if (event.key === 'Escape') {
+    closeModal(bookingModal);
+    closeModal(authModal);
+  }
+});
+
+async function loadShops() {
+  bookingShop.disabled = true;
+  setFeedback(bookingFeedback, 'Carregando barbearias...');
+  try {
+    shops = await supabaseRequest('barbershops?select=id,name,slug&status=eq.active&order=name');
+    bookingShop.replaceChildren(...shops.map(shop => new Option(shop.name, shop.id)));
+    bookingShop.disabled = shops.length === 0;
+    if (!shops.length) {
+      setFeedback(bookingFeedback, 'Nenhuma barbearia ativa encontrada.');
+      return;
+    }
+    setFeedback(bookingFeedback, '');
+    await loadProfessionals();
+  } catch (error) {
+    setFeedback(bookingFeedback, `Não foi possível carregar as barbearias: ${error.message}`, true);
+  }
+}
+
+async function loadProfessionals() {
+  bookingProfessional.disabled = true;
+  bookingService.disabled = true;
+  bookingTime.disabled = true;
+  bookingProfessional.replaceChildren();
+  bookingService.replaceChildren();
+  bookingTime.replaceChildren();
+  selectedAppointmentSlot = null;
+  try {
+    const rows = await supabaseRequest('rpc/list_active_professionals', {
+      method:'POST', body:JSON.stringify({p_barbershop_id:bookingShop.value})
+    });
+    bookingProfessional.replaceChildren(...rows.map(row => new Option(row.full_name || 'Profissional', row.id)));
+    bookingProfessional.disabled = rows.length === 0;
+    if (!rows.length) {
+      setFeedback(bookingFeedback, 'Esta barbearia ainda não possui profissionais ativos.');
+      return;
+    }
+    setFeedback(bookingFeedback, '');
+    await loadServices();
+  } catch (error) {
+    setFeedback(bookingFeedback, `Não foi possível carregar os profissionais: ${error.message}`, true);
+  }
+}
+
+async function loadServices() {
+  bookingService.disabled = true;
+  bookingTime.disabled = true;
+  bookingService.replaceChildren();
+  bookingTime.replaceChildren();
+  selectedAppointmentSlot = null;
+  try {
+    const links = await supabaseRequest(`professional_services?select=service_id&professional_id=eq.${encodeURIComponent(bookingProfessional.value)}`);
+    const ids = links.map(link => link.service_id);
+    if (!ids.length) {
+      setFeedback(bookingFeedback, 'Este profissional ainda não tem serviços associados.');
+      return;
+    }
+    const filter = `(${ids.join(',')})`;
+    const rows = await supabaseRequest(`services?select=id,name,price,duration_minutes&id=in.${encodeURIComponent(filter)}&barbershop_id=eq.${encodeURIComponent(bookingShop.value)}&active=eq.true&order=name`);
+    bookingService.replaceChildren(...rows.map(service => new Option(
+      `${service.name} · ${currency(service.price)} · ${service.duration_minutes} min`, service.id
+    )));
+    bookingService.disabled = rows.length === 0;
+    if (!rows.length) {
+      setFeedback(bookingFeedback, 'Nenhum serviço ativo associado a este profissional.');
+      return;
+    }
+    setFeedback(bookingFeedback, '');
+    await loadSlots();
+  } catch (error) {
+    setFeedback(bookingFeedback, `Não foi possível carregar os serviços: ${error.message}`, true);
+  }
+}
+
+async function loadSlots() {
+  bookingTime.disabled = true;
+  bookingTime.replaceChildren();
+  selectedAppointmentSlot = null;
+  if (!bookingProfessional.value || !bookingService.value || !bookingDate.value) return;
+  setFeedback(bookingFeedback, 'Consultando horários disponíveis...');
+  try {
+    const rows = await supabaseRequest('rpc/available_appointment_slots', {
+      method:'POST',
+      body:JSON.stringify({
+        p_professional_id:bookingProfessional.value,
+        p_service_id:bookingService.value,
+        p_date:bookingDate.value
+      })
+    });
+    bookingTime.replaceChildren(new Option('Selecione um horário', ''));
+    rows.forEach(slot => {
+      const option = new Option(slot.local_time.slice(0,5), slot.local_time.slice(0,5));
+      option.dataset.startsAt = slot.slot_start;
+      bookingTime.add(option);
+    });
+    bookingTime.disabled = rows.length === 0;
+    bookingSubmit.disabled = true;
+    setFeedback(bookingFeedback, rows.length ? `${rows.length} horário(s) disponível(is).` : 'Não há horários disponíveis nesta data.');
+  } catch (error) {
+    setFeedback(bookingFeedback, `Não foi possível consultar a disponibilidade: ${error.message}`, true);
+  }
+}
+
+bookingShop.addEventListener('change', loadProfessionals);
+bookingProfessional.addEventListener('change', loadServices);
+bookingService.addEventListener('change', loadSlots);
+bookingDate.addEventListener('change', loadSlots);
+bookingTime.addEventListener('change', () => {
+  selectedAppointmentSlot = bookingTime.selectedOptions[0]?.dataset.startsAt || null;
+  bookingSubmit.disabled = !selectedAppointmentSlot;
+});
+
+function setAuthMode(mode) {
+  authMode = mode;
+  const signUp = mode === 'signup';
+  document.querySelector('#auth-title').textContent = signUp ? 'Criar sua conta' : 'Entrar';
+  document.querySelector('#auth-description').textContent = signUp ? 'Cadastre-se para fazer agendamentos.' : 'Entre para confirmar seu agendamento.';
+  document.querySelector('#auth-role-note').textContent = signUp
+    ? 'Sua escolha informa como você pretende usar o Barberly. Para acessar a gestão, a equipe precisa vincular sua conta à barbearia.'
+    : 'A seleção não altera as permissões da sua conta. O acesso é determinado pelo perfil já autorizado no sistema.';
+  document.querySelector('#auth-name-field').hidden = !signUp;
+  document.querySelector('#auth-name').required = signUp;
+  document.querySelector('#auth-password').autocomplete = signUp ? 'new-password' : 'current-password';
+  document.querySelector('#auth-mode-toggle').textContent = signUp ? 'Já tenho conta' : 'Criar conta';
+  document.querySelector('#auth-form button[type="submit"]').textContent = signUp ? 'Criar conta' : 'Entrar';
+}
+
+document.querySelector('#auth-mode-toggle').addEventListener('click', () => setAuthMode(authMode === 'signin' ? 'signup' : 'signin'));
+authButton.addEventListener('click', () => {
+  if (!session) {
+    setAuthMode('signin');
+    openAuth();
+    return;
+  }
+  saveSession(null);
+  showToast('Sessão encerrada.');
+});
+
+document.querySelector('#auth-form').addEventListener('submit', async event => {
+  event.preventDefault();
+  const email = document.querySelector('#auth-email').value.trim();
+  const password = document.querySelector('#auth-password').value;
+  const name = document.querySelector('#auth-name').value.trim();
+  const accountType = document.querySelector('#auth-account-type').value;
+  const endpoint = authMode === 'signup' ? 'signup' : 'token?grant_type=password';
+  const payload = authMode === 'signup'
+    ? {email,password,data:{full_name:name,intended_account_type:accountType}}
+    : {email,password};
+  const submit = event.currentTarget.querySelector('button[type="submit"]');
+  submit.disabled = true;
+  setFeedback(authFeedback, authMode === 'signup' ? 'Criando sua conta...' : 'Entrando...');
+  try {
+    const result = await request(`${authBase}/${endpoint}`, {method:'POST',body:JSON.stringify(payload)}, config.supabaseAnonKey);
+    if (result.access_token) {
+      saveSession(result);
+      closeModal(authModal);
+      setFeedback(bookingFeedback, 'Conta conectada. Selecione um horário e confirme o agendamento.');
+      showToast('Login realizado.');
+    } else {
+      setAuthMode('signin');
+      setFeedback(authFeedback, accountType === 'client'
+        ? 'Conta criada. Confirme seu e-mail e depois entre para agendar.'
+        : 'Conta criada. Confirme seu e-mail; a equipe precisa vincular sua conta à barbearia para liberar a gestão.');
+    }
+  } catch (error) {
+    setFeedback(authFeedback, error.message, true);
+  } finally {
+    submit.disabled = false;
+  }
+});
+
+bookingForm.addEventListener('submit', async event => {
+  event.preventDefault();
+  if (!session?.user?.id) {
+    openAuth();
+    setFeedback(authFeedback, 'Entre ou crie uma conta para concluir o agendamento.');
+    return;
+  }
+  if (!selectedAppointmentSlot) {
+    setFeedback(bookingFeedback, 'Selecione uma data e um horário disponível.', true);
+    return;
+  }
+  bookingSubmit.disabled = true;
+  setFeedback(bookingFeedback, 'Confirmando seu agendamento...');
+  try {
+    await supabaseRequest('rpc/create_appointment', {
+      method:'POST',
+      body:JSON.stringify({
+        p_barbershop_id:bookingShop.value,
+        p_professional_id:bookingProfessional.value,
+        p_client_id:session.user.id,
+        p_service_id:bookingService.value,
+        p_starts_at:selectedAppointmentSlot
+      })
+    });
+    closeModal(bookingModal);
+    showToast('Agendamento confirmado.');
+    bookingForm.reset();
+    bookingDate.value = localToday();
+    selectedAppointmentSlot = null;
+    bookingTime.replaceChildren();
+    await loadAppointments();
+  } catch (error) {
+    setFeedback(bookingFeedback, `Não foi possível confirmar: ${error.message}`, true);
+    if (error.message.includes('HORARIO_INDISPONIVEL')) await loadSlots();
+  } finally {
+    bookingSubmit.disabled = false;
+    updateAuthButton();
+  }
+});
+
+appointmentTable.addEventListener('click', async event => {
+  const button = event.target.closest('.cancel-appointment');
+  if (!button) return;
+  const appointment = appointmentsById.get(button.dataset.appointmentId);
+  if (!appointment || !window.confirm(`Cancelar o agendamento de ${appointment.client_name} em ${localDate(appointment.starts_at)} às ${localTime(appointment.starts_at)}?`)) return;
+  button.disabled = true;
+  try {
+    await supabaseRequest('rpc/cancel_my_appointment', {
+      method:'POST', body:JSON.stringify({p_appointment_id:appointment.id})
+    });
+    showToast('Agendamento cancelado.');
+    await loadAppointments();
+  } catch (error) {
+    showToast(error.message, true);
+  } finally {
+    button.disabled = false;
+  }
+});
+
+document.querySelector('#appointment-search').addEventListener('input', renderAppointments);
+document.querySelector('#appointment-status-filter').addEventListener('change', renderAppointments);
+document.querySelector('#refresh-appointments').addEventListener('click', loadAppointments);
+document.querySelector('#refresh-agenda').addEventListener('click', loadAppointments);
+document.querySelector('#agenda-date').addEventListener('change', renderAgenda);
+
+bookingDate.min = localToday();
+bookingDate.value = localToday();
+document.querySelector('#agenda-date').min = localToday();
+document.querySelector('#agenda-date').value = localToday();
+updateAuthButton();
+updateIdentity();
+if (session?.access_token) loadOperationalData();
+else clearOperationalData();
+updateIdentity();
+checkConnection();

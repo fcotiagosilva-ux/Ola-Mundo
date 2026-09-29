@@ -1,13 +1,69 @@
-<!DOCTYPE html>
-<html lang="pt-br">
+<!doctype html>
+<html lang="pt-BR">
 <head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Meu primeiro site de repositorio</title>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="theme-color" content="#0b0d10">
+  <title>Barberly — Gestão inteligente para barbearias</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=Space+Grotesk:wght@500;600;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="styles.css">
 </head>
 <body>
-    <h1>Olá, Mundo</h1>
-    <p>Lorem ipsum dolor sit, amet consectetur adipisicing elit. Aliquid velit, iste sunt mollitia dolorem fugiat corporis enim, doloremque, ullam perferendis aperiam! Amet ipsum in iusto quas placeat qui optio laboriosam!</p>
-    <p>Lorem ipsum dolor sit amet consectetur adipisicing elit. Recusandae accusantium cumque eius, cum sequi quos incidunt natus officia molestias, impedit eveniet eligendi earum rem expedita, similique corporis laudantium nam atque?</p>
+  <div class="app-shell">
+    <aside class="sidebar" aria-label="Navegação principal">
+      <div class="brand"><span class="brand-mark">✦</span><span>barberly</span></div>
+      <div class="workspace-switcher"><span class="avatar small" id="workspace-avatar">?</span><span><b id="workspace-name">Visitante</b><small id="workspace-role">Não conectado</small></span><span class="chevron">⌄</span></div>
+      <nav class="nav-list">
+        <p class="nav-label">Workspace</p>
+        <button class="nav-item active" data-view="overview"><span>▦</span>Visão geral</button>
+        <button class="nav-item" data-view="agenda"><span>◷</span>Agenda</button>
+        <button class="nav-item" data-view="shops"><span>⌂</span>Barbearias</button>
+        <button class="nav-item" data-view="registers"><span>⊞</span>Cadastros</button>
+        <button class="nav-item" data-view="appointments"><span>◌</span>Agendamentos</button>
+        <button class="nav-item" data-view="reports"><span>⌁</span>Relatórios</button>
+        <p class="nav-label">Conta</p>
+        <button class="nav-item"><span>⚙</span>Configurações</button>
+        <button class="nav-item"><span>?</span>Central de ajuda</button>
+      </nav>
+      <div class="sidebar-bottom"><div class="profile"><span class="avatar" id="profile-avatar">?</span><span><b>Visitante</b><small>Não conectado</small></span><span class="more">•••</span></div></div>
+    </aside>
+
+    <main class="main">
+      <header class="topbar"><button class="mobile-menu" aria-label="Abrir menu">☰</button><div class="breadcrumb">Workspace <span>/</span> <b id="breadcrumb">Visão geral</b></div><div class="top-actions"><span class="connection-status" id="supabase-status">Conectando...</span><button class="outline-btn auth-trigger" id="auth-trigger">Entrar</button></div></header>
+
+      <section id="overview" class="view active-view">
+        <div class="page-heading"><div><p class="eyebrow" id="current-date"></p><h1 id="welcome-heading">Visão da operação <span>✦</span></h1><p class="subtitle">Resumo calculado a partir dos dados reais do Supabase.</p></div><button class="primary-btn" id="open-booking"><span>＋</span> Novo agendamento</button></div>
+        <div class="metrics">
+          <article class="metric-card"><div class="metric-top"><span>Receita este mês</span><span class="metric-icon green">↗</span></div><strong>—</strong></article>
+          <article class="metric-card"><div class="metric-top"><span>Agendamentos</span><span class="metric-icon purple">◷</span></div><strong>—</strong></article>
+          <article class="metric-card"><div class="metric-top"><span>Clientes ativos</span><span class="metric-icon orange">♙</span></div><strong>—</strong></article>
+          <article class="metric-card"><div class="metric-top"><span>Ticket médio</span><span class="metric-icon blue">↗</span></div><strong>—</strong></article>
+        </div>
+        <div class="content-grid">
+          <article class="panel chart-panel"><div class="panel-heading"><div><h2>Receita ao longo do tempo</h2><p>Desempenho da unidade selecionada</p></div></div><div class="chart"><p class="empty-state">Entre com uma conta de gestor para ver os dados.</p></div></article>
+          <article class="panel appointments-panel"><div class="panel-heading"><div><h2>Próximos agendamentos</h2><p>Próximos atendimentos da sua conta</p></div><button class="text-btn" data-view="agenda">Ver agenda →</button></div><div id="upcoming-list" class="appointment-list"></div></article>
+        </div>
+        <div class="content-grid bottom-grid"><article class="panel"><div class="panel-heading"><div><h2>Barbearias vinculadas</h2><p>Unidades da sua conta</p></div><button class="text-btn" data-view="shops">Ver unidades →</button></div><div class="shop-list"></div></article><article class="panel goal-panel"><div class="panel-heading"><div><h2>Meta mensal</h2><p>Configuração do estabelecimento</p></div></div><div class="goal"><p class="empty-state">Nenhuma meta mensal configurada.</p></div></article></div>
+      </section>
+
+      <section id="agenda" class="view"><div class="page-heading"><div><p class="eyebrow">OPERAÇÃO</p><h1>Agenda <span>◷</span></h1><p class="subtitle">Agendamentos reais da sua barbearia.</p></div><button class="primary-btn" id="open-booking-agenda">＋ Novo agendamento</button></div><div class="toolbar"><input class="date-input" type="date" id="agenda-date"><div class="toolbar-spacer"></div><button class="outline-btn" id="refresh-agenda">Atualizar</button></div><div class="agenda-layout"><div class="agenda-staff"><div class="time-head">Data e horário</div><div id="agenda-items" class="agenda-items"></div></div><div class="agenda-empty" id="agenda-message">Entre com uma conta da equipe para consultar a agenda.</div></div></section>
+
+      <section id="shops" class="view"><div class="page-heading"><div><p class="eyebrow">GESTÃO SAAS</p><h1>Barbearias <span>⌂</span></h1><p class="subtitle">Unidades cadastradas no Supabase.</p></div></div><div class="filters"><div class="search">⌕ <input id="shop-search" placeholder="Buscar por nome ou cidade"></div><span class="filter-count" id="shop-count"></span></div><div class="shop-cards"></div></section>
+
+      <section id="registers" class="view"><div class="page-heading"><div><p class="eyebrow">CONFIGURAÇÃO</p><h1>Cadastros <span>⊞</span></h1><p class="subtitle">Profissionais e serviços ativos por unidade.</p></div></div><div class="register-tabs"><button class="active" data-register-type="professionals">Profissionais</button><button data-register-type="services">Serviços</button></div><div class="panel table-panel"><div class="filters"><div class="search">⌕ <input id="register-search" placeholder="Buscar"></div><select id="register-shop"></select></div><table><thead id="register-head"></thead><tbody id="register-table"><tr><td>Carregando cadastros...</td></tr></tbody></table></div></section>
+
+      <section id="appointments" class="view"><div class="page-heading"><div><p class="eyebrow">GESTÃO</p><h1>Agendamentos <span>◌</span></h1><p class="subtitle">Seus atendimentos e opções de cancelamento.</p></div><button class="primary-btn" id="open-booking-list">＋ Novo agendamento</button></div><div class="panel table-panel"><div class="filters"><div class="search">⌕ <input id="appointment-search" placeholder="Buscar cliente, serviço ou profissional"></div><select id="appointment-status-filter"><option value="">Todos os status</option><option value="pending">Pendentes</option><option value="confirmed">Confirmados</option><option value="completed">Concluídos</option><option value="cancelled">Cancelados</option></select><button class="outline-btn" id="refresh-appointments">Atualizar</button></div><table><thead><tr><th>CLIENTE</th><th>DATA E HORA</th><th>PROFISSIONAL</th><th>SERVIÇO</th><th>STATUS</th><th>VALOR</th><th></th></tr></thead><tbody id="appointment-table"><tr><td colspan="7">Entre na sua conta para consultar agendamentos reais.</td></tr></tbody></table></div></section>
+
+      <section id="reports" class="view"><div class="page-heading"><div><p class="eyebrow">ANÁLISES</p><h1>Relatórios <span>⌁</span></h1><p class="subtitle">Receita de serviços concluídos no mês atual.</p></div></div><div class="report-cards"><article class="report-card"><strong>Entre como gestor</strong><p>Os relatórios reais serão carregados após autenticação.</p></article></div></section>
+    </main>
+  </div>
+
+  <div class="modal-backdrop" id="booking-modal" aria-hidden="true"><div class="modal booking-modal"><button class="modal-close" aria-label="Fechar">×</button><div class="modal-heading"><p class="eyebrow">NOVO AGENDAMENTO</p><h2>Agende um atendimento</h2><p>Escolha a unidade, profissional e horário.</p></div><form id="booking-form"><label>Barbearia<select id="booking-shop" required></select></label><label>Profissional<select id="booking-professional" required disabled></select></label><label>Serviço<select id="booking-service" required disabled></select></label><div class="form-row"><label>Data<input id="booking-date" type="date" required></label><label>Horário<select id="booking-time" required disabled></select></label></div><p class="booking-feedback" id="booking-feedback" role="status"></p><div class="modal-actions"><button type="button" class="outline-btn modal-close-btn">Cancelar</button><button class="primary-btn" id="booking-submit" type="submit" disabled>Entrar para agendar</button></div></form></div></div>
+  <div class="modal-backdrop" id="auth-modal" aria-hidden="true"><div class="modal auth-modal"><button class="modal-close" aria-label="Fechar">×</button><div class="modal-heading"><p class="eyebrow">CONTA BARBERLY</p><h2 id="auth-title">Entrar</h2><p id="auth-description">Entre para confirmar seu agendamento.</p></div><form id="auth-form"><label id="auth-name-field" hidden>Nome completo<input id="auth-name" autocomplete="name"></label><label>Como você vai usar o Barberly?<select id="auth-account-type" required><option value="client">Sou cliente</option><option value="barbershop">Tenho uma barbearia</option></select></label><p class="auth-role-note" id="auth-role-note">A seleção não altera as permissões da sua conta. O acesso à gestão da barbearia precisa ser liberado pela equipe.</p><label>E-mail<input id="auth-email" type="email" autocomplete="email" required></label><label>Senha<input id="auth-password" type="password" autocomplete="current-password" minlength="8" required></label><p class="booking-feedback" id="auth-feedback" role="status"></p><div class="modal-actions"><button class="text-btn" id="auth-mode-toggle" type="button">Criar conta</button><button class="primary-btn" type="submit">Entrar</button></div></form></div></div>
+  <div class="toast" id="toast">✓ Agendamento criado com sucesso</div>
+  <script src="supabase-config.js"></script>
+  <script src="app.js"></script>
 </body>
 </html>
