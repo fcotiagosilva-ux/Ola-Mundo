@@ -108,28 +108,28 @@ begin
   from public.profiles p
   where p.id = new.client_id;
 
-  if v_role is distinct from 'client' then
+  if v_role = 'super_admin' then
     return new;
   end if;
 
-  if exists (
-    select 1
-    from public.client_barbershop_links link
-    where link.client_id = new.client_id
-  ) and not exists (
+  if v_role = 'client' and exists (
     select 1
     from public.client_barbershop_links link
     where link.client_id = new.client_id
       and link.barbershop_id = new.barbershop_id
   ) then
+    return new;
+  end if;
+
+  if v_role in ('manager', 'professional') and public.is_member(new.barbershop_id) then
+    return new;
+  end if;
+
+  if v_role = 'client' then
     raise exception 'CLIENTE_NAO_VINCULADO_A_BARBEARIA';
   end if;
 
-  insert into public.client_barbershop_links(client_id, barbershop_id)
-  values(new.client_id, new.barbershop_id)
-  on conflict do nothing;
-
-  return new;
+  raise exception 'CONTA_NAO_VINCULADA_A_BARBEARIA';
 end;
 $$;
 

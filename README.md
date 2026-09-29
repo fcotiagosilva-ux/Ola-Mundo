@@ -19,7 +19,7 @@ Para produção, execute o schema no SQL Editor do Supabase. O frontend está co
 3. Execute `supabase/operations-runtime.sql` para ativar agenda, métricas protegidas, relatórios de serviços e cancelamento por regra de antecedência. O script solicita a atualização do cache de schema da API ao terminar.
 4. Execute `supabase/appointment-actions-runtime.sql` para ativar conclusão de atendimentos por gestores e cancelamento com retorno de identificador UUID.
 5. Execute `supabase/tenant-onboarding-runtime.sql` para habilitar criação protegida de unidades, convites de gestor/profissional de uso único e o link de agendamento por unidade.
-6. Execute `supabase/customer-barbershop-links-runtime.sql` para vincular contas de clientes às unidades acessadas pelos respectivos links de agendamento e restringir novas reservas às unidades vinculadas.
+6. Execute `supabase/customer-barbershop-links-runtime.sql` para vincular clientes às unidades acessadas pelos respectivos links, restringir a agenda às unidades vinculadas à conta e validar esse limite também no banco. Super administradores continuam podendo acessar todas as unidades ativas.
 7. Execute `supabase/catalog-management-runtime.sql` para permitir cadastro protegido de serviços e configuração semanal de horários dos profissionais.
 8. Em **Cadastros**, selecione uma unidade e use **Adicionar serviço** para informar preço, duração e profissionais habilitados. Use **Horários dos profissionais** para definir um período de funcionamento por dia da semana.
 9. Abra **Novo agendamento**, escolha uma unidade e siga os horários disponíveis. O cliente precisa entrar ou criar conta para confirmar.
@@ -28,7 +28,7 @@ O painel mostra dados reais e permanece vazio/indisponível quando não há sess
 
 No formulário de autenticação, o usuário informa se é cliente ou se tem uma barbearia. Essa escolha nos metadados da conta não concede permissões. Os links de convite, emitidos por usuários autorizados, expiram em 14 dias e só podem ser usados uma vez; quem recebe o link pode reivindicar o convite, então compartilhe-o somente com o destinatário correto.
 
-O link de agendamento de uma unidade vincula a conta do cliente àquela barbearia após o login ou cadastro. Se receber links de outras unidades, a mesma conta pode acessá-las também; clientes vinculados só podem reservar nas unidades associadas à conta.
+O link de agendamento de uma unidade vincula a conta do cliente àquela barbearia após o login ou cadastro. Se receber links de outras unidades, a mesma conta pode acessá-las também. Clientes, profissionais e gestores veem e agendam somente nas unidades às quais estão vinculados; super administradores mantêm acesso global.
 
 Se a API retornar `Could not find the function ... in the schema cache` após aplicar uma migração, execute `NOTIFY pgrst, 'reload schema';` no SQL Editor e recarregue o site.
 

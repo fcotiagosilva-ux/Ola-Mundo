@@ -91,6 +91,7 @@ async function processPendingInvite() {
     });
     const invite = Array.isArray(result) ? result[0] : result;
     pendingInviteToken = null;
+    registerShops = [];
     const url = new URL(window.location.href);
     url.searchParams.delete('invite');
     window.history.replaceState({}, '', url);
@@ -112,6 +113,7 @@ function setInviteLink(inputId, token) {
 
 function saveSession(value) {
   session = value;
+  registerShops = [];
   if (!value) profileRecord = null;
   if (value) localStorage.setItem('barberly-session', JSON.stringify(value));
   else localStorage.removeItem('barberly-session');
@@ -353,6 +355,32 @@ async function ensureRequestedClientShopLink() {
   linkedRequestedShop = linkKey;
 }
 
+async function loadAccessibleBarbershops() {
+  if (!session?.access_token) {
+    return supabaseRequest('barbershops?select=id,name,slug,phone,address,city,status&status=eq.active&order=name');
+  }
+  if (!profileRecord) return [];
+
+  if (profileRecord.role === 'client') {
+    await ensureRequestedClientShopLink();
+    const links = await supabaseRequest('rpc/list_my_client_barbershops', {
+      method:'POST', body:'{}'
+    });
+    const linkedIds = links.filter(shop => shop.status === 'active').map(shop => shop.id);
+    if (!linkedIds.length) return [];
+    const filter = `(${linkedIds.join(',')})`;
+    return supabaseRequest(
+      `barbershops?select=id,name,slug,phone,address,city,status&id=in.${encodeURIComponent(filter)}&status=eq.active&order=name`
+    );
+  }
+
+  if (['manager','professional','super_admin'].includes(profileRecord.role)) {
+    return supabaseRequest('rpc/list_my_barbershops', {method:'POST',body:'{}'});
+  }
+
+  return [];
+}
+
 async function loadDashboard() {
   const metrics = document.querySelectorAll('.metric-card strong');
   try {
@@ -467,9 +495,8 @@ function renderUpcoming() {
 async function loadShopDirectory() {
   const container = document.querySelector('.shop-cards');
   try {
-    const rows = profileRecord?.role === 'manager' || profileRecord?.role === 'super_admin'
-      ? await supabaseRequest('rpc/list_my_barbershops', {method:'POST',body:'{}'})
-      : await supabaseRequest('barbershops?select=id,name,slug,phone,address,city,status&status=eq.active&order=name');
+    if (session?.access_token && !profileRecord) await loadIdentity();
+    const rows = await loadAccessibleBarbershops();
     const query = document.querySelector('#shop-search').value.trim().toLocaleLowerCase('pt-BR');
     const filtered = rows.filter(shop => !query || `${shop.name} ${shop.address || ''} ${shop.city || ''}`.toLocaleLowerCase('pt-BR').includes(query));
     document.querySelector('#shop-count').textContent = `${filtered.length} unidade(s) ativa(s)`;
@@ -483,7 +510,7 @@ async function loadShopDirectory() {
           ? `<button class="text-btn invite-manager" data-shop-id="${escapeText(shop.id)}" data-shop-name="${escapeText(shop.name)}">Gerar link para gestor</button>` : '';
         return `<article class="shop-card"><div class="shop-card-head"><span class="shop-logo">${escapeText(shop.name.slice(0,2).toUpperCase())}</span><span class="status active">Ativa</span></div><h3>${escapeText(shop.name)}</h3><p>${escapeText(shop.address || shop.city || 'Endereço não informado')}${shop.phone ? ` · ${escapeText(shop.phone)}` : ''}</p><div class="shop-stats"><span><b>/${escapeText(shop.slug)}</b><small>link público da unidade</small></span></div>${actions}${managerLink}</article>`;
       }).join('')
-      : `<article class="shop-card"><p>${profileRecord?.role === 'manager' || profileRecord?.role === 'super_admin' ? 'Nenhuma unidade vinculada a esta conta.' : 'Nenhuma barbearia ativa encontrada.'}</p></article>`;
+      : `<article class="shop-card"><p>${session?.access_token ? 'Nenhuma barbearia vinculada a esta conta. Acesse pelo link da barbearia ou solicite um convite.' : 'Nenhuma barbearia ativa encontrada.'}</p></article>`;
   } catch (error) {
     container.innerHTML = `<article class="shop-card"><p>${escapeText(error.message)}</p></article>`;
   }
@@ -544,13 +571,12 @@ async function loadRegisters() {
   table.innerHTML = '<tr><td>Carregando...</td></tr>';
   try {
     if (!registerShops.length) {
-      registerShops = profileRecord?.role === 'manager' || profileRecord?.role === 'super_admin'
-        ? await supabaseRequest('rpc/list_my_barbershops', {method:'POST',body:'{}'})
-        : await supabaseRequest('barbershops?select=id,name&status=eq.active&order=name');
+      if (session?.access_token && !profileRecord) await loadIdentity();
+      registerShops = await loadAccessibleBarbershops();
       shopSelect.replaceChildren(...registerShops.map(shop => new Option(shop.name, shop.id)));
     }
     if (!shopSelect.value) {
-      table.innerHTML = '<tr><td>Nenhuma barbearia ativa.</td></tr>';
+      table.innerHTML = '<tr><td>Nenhuma barbearia vinculada a esta conta.</td></tr>';
       return;
     }
     registerRows = registerType === 'professionals'
@@ -894,18 +920,8 @@ async function loadShops() {
   try {
     if (session?.access_token) {
       await loadIdentity();
-      await ensureRequestedClientShopLink();
     }
-    if (profileRecord?.role === 'client') {
-      const clientLinks = await supabaseRequest('rpc/list_my_client_barbershops', {
-        method:'POST', body:'{}'
-      });
-      shops = clientLinks.length
-        ? clientLinks.filter(shop => shop.status === 'active')
-        : await supabaseRequest('barbershops?select=id,name,slug&status=eq.active&order=name');
-    } else {
-      shops = await supabaseRequest('barbershops?select=id,name,slug&status=eq.active&order=name');
-    }
+    shops = await loadAccessibleBarbershops();
     bookingShop.replaceChildren(...shops.map(shop => new Option(shop.name, shop.id)));
     if (requestedShopSlug) {
       const requestedShop = shops.find(shop => shop.slug === requestedShopSlug);
@@ -913,7 +929,9 @@ async function loadShops() {
     }
     bookingShop.disabled = shops.length === 0;
     if (!shops.length) {
-      setFeedback(bookingFeedback, 'Nenhuma barbearia ativa encontrada.');
+      setFeedback(bookingFeedback, session?.access_token
+        ? 'Sua conta ainda não está vinculada a uma barbearia. Abra o link recebido da unidade ou solicite um convite.'
+        : 'Nenhuma barbearia ativa encontrada.');
       return;
     }
     setFeedback(bookingFeedback, '');
