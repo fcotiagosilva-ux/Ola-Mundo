@@ -191,6 +191,18 @@ begin
     raise exception 'CONVITE_INVALIDO_OU_EXPIRADO_JA_UTILIZADO';
   end if;
 
+  insert into public.profiles(id, full_name, phone)
+  select u.id,
+         coalesce(
+           nullif(u.raw_user_meta_data ->> 'full_name', ''),
+           nullif(split_part(u.email, '@', 1), ''),
+           'Cliente'
+         ),
+         u.raw_user_meta_data ->> 'phone'
+  from auth.users u
+  where u.id = auth.uid()
+  on conflict (id) do nothing;
+
   select p.* into v_profile from public.profiles p where p.id = auth.uid() for update;
   if not found then
     raise exception 'PERFIL_DO_USUARIO_NAO_ENCONTRADO';
