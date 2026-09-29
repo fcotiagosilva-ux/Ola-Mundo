@@ -1,18 +1,26 @@
 -- Painel operacional e cancelamento autenticado.
 -- Execute no SQL Editor após schema.sql e booking-runtime.sql.
 
+drop function if exists public.list_my_barbershops();
+
 create or replace function public.list_my_barbershops()
-returns table(id uuid, name text)
+returns table(id uuid, name text, slug text, address text, phone text, status text)
 language sql
 stable
 security definer
 set search_path = public, pg_temp
 as $$
-  select b.id, b.name
+  select b.id, b.name, b.slug, b.address, b.phone, b.status
   from public.barbershops b
   where auth.uid() is not null
-    and public.is_member(b.id)
     and b.status = 'active'
+    and (
+      public.is_member(b.id)
+      or exists (
+        select 1 from public.profiles me
+        where me.id = auth.uid() and me.role = 'super_admin'
+      )
+    )
   order by b.name;
 $$;
 
@@ -53,8 +61,9 @@ begin
               and a.starts_at > now() + make_interval(hours => b.cancellation_hours))
              or (public.is_member(a.barbershop_id)
                  and a.professional_id = auth.uid())
+             or exists (select 1 from public.profiles me where me.id = auth.uid() and me.role = 'super_admin')
              or (public.is_member(a.barbershop_id)
-                 and exists (select 1 from public.profiles me where me.id = auth.uid() and me.role in ('manager','super_admin')))
+                 and exists (select 1 from public.profiles me where me.id = auth.uid() and me.role = 'manager'))
            )
   from public.appointments a
   join public.profiles client on client.id = a.client_id
@@ -62,8 +71,9 @@ begin
   join public.services s on s.id = a.service_id
   join public.barbershops b on b.id = a.barbershop_id
   where a.client_id = auth.uid()
+     or exists (select 1 from public.profiles me where me.id = auth.uid() and me.role = 'super_admin')
      or (public.is_member(a.barbershop_id)
-         and (exists (select 1 from public.profiles me where me.id = auth.uid() and me.role in ('manager','super_admin'))
+         and (exists (select 1 from public.profiles me where me.id = auth.uid() and me.role = 'manager')
               or a.professional_id = auth.uid()))
   order by a.starts_at;
 end;
@@ -103,7 +113,10 @@ begin
   select exists(select 1 from public.profiles me where me.id = auth.uid() and me.role in ('manager','super_admin'))
     into v_is_manager;
   if v_appointment.client_id <> auth.uid()
-     and not (v_is_member and (v_is_manager or v_appointment.professional_id = auth.uid())) then
+     and not (
+       (v_is_member and (v_is_manager or v_appointment.professional_id = auth.uid()))
+       or exists (select 1 from public.profiles me where me.id = auth.uid() and me.role = 'super_admin')
+     ) then
     raise exception 'SEM_PERMISSAO_PARA_CANCELAR';
   end if;
   if v_appointment.status not in ('pending', 'confirmed') then
@@ -144,8 +157,14 @@ declare
                                 at time zone 'America/Sao_Paulo';
 begin
   if auth.uid() is null
-     or not public.is_member(p_barbershop_id)
-     or not exists (select 1 from public.profiles me where me.id = auth.uid() and me.role in ('manager','super_admin')) then
+     or not exists (
+       select 1 from public.profiles me
+       where me.id = auth.uid()
+         and (
+           me.role = 'super_admin'
+           or (me.role = 'manager' and public.is_member(p_barbershop_id))
+         )
+     ) then
     raise exception 'SEM_PERMISSAO_PARA_METRICAS';
   end if;
 
@@ -175,8 +194,14 @@ set search_path = public, pg_temp
 as $$
 begin
   if auth.uid() is null
-     or not public.is_member(p_barbershop_id)
-     or not exists (select 1 from public.profiles me where me.id = auth.uid() and me.role in ('manager','super_admin')) then
+     or not exists (
+       select 1 from public.profiles me
+       where me.id = auth.uid()
+         and (
+           me.role = 'super_admin'
+           or (me.role = 'manager' and public.is_member(p_barbershop_id))
+         )
+     ) then
     raise exception 'SEM_PERMISSAO_PARA_RELATORIOS';
   end if;
 

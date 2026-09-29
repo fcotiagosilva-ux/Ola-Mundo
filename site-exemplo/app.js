@@ -7,6 +7,9 @@ const toast = document.querySelector('#toast');
 const bookingForm = document.querySelector('#booking-form');
 const bookingModal = document.querySelector('#booking-modal');
 const authModal = document.querySelector('#auth-modal');
+const shopModal = document.querySelector('#shop-modal');
+const inviteModal = document.querySelector('#invite-modal');
+const clientLinkModal = document.querySelector('#client-link-modal');
 const bookingFeedback = document.querySelector('#booking-feedback');
 const authFeedback = document.querySelector('#auth-feedback');
 const bookingShop = document.querySelector('#booking-shop');
@@ -30,6 +33,10 @@ let registerType = 'professionals';
 let registerShops = [];
 let registerRows = [];
 let profileRecord = null;
+let managedShops = [];
+let pendingInviteToken = new URLSearchParams(window.location.search).get('invite');
+let requestedShopSlug = new URLSearchParams(window.location.search).get('barbershop');
+let inviteInProgress = false;
 
 function readSession() {
   try {
@@ -37,6 +44,67 @@ function readSession() {
   } catch {
     return null;
   }
+}
+
+function slugify(value) {
+  return value.normalize('NFD').replace(/[\u0300-\u036f]/g, '')
+    .toLowerCase().trim().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '');
+}
+
+function inviteSignupUrl(token) {
+  const url = new URL(window.location.href);
+  url.search = '';
+  url.hash = '';
+  url.searchParams.set('invite', token);
+  return url.toString();
+}
+
+async function copyInputValue(inputId, button) {
+  const input = document.querySelector(`#${inputId}`);
+  try {
+    await navigator.clipboard.writeText(input.value);
+    showToast('Link copiado.');
+  } catch (error) {
+    input.focus();
+    input.select();
+    const copied = document.execCommand('copy');
+    if (!copied) {
+      showToast('Não foi possível copiar. Selecione e copie o link manualmente.', true);
+      return;
+    }
+    showToast('Link copiado.');
+  }
+  button.disabled = true;
+  window.setTimeout(() => { button.disabled = false; }, 1000);
+}
+
+async function processPendingInvite() {
+  if (!session?.access_token || !pendingInviteToken || inviteInProgress) return false;
+  inviteInProgress = true;
+  try {
+    const result = await supabaseRequest('rpc/claim_barbershop_invite', {
+      method:'POST',
+      body:JSON.stringify({p_token:pendingInviteToken})
+    });
+    const invite = Array.isArray(result) ? result[0] : result;
+    pendingInviteToken = null;
+    const url = new URL(window.location.href);
+    url.searchParams.delete('invite');
+    window.history.replaceState({}, '', url);
+    await loadOperationalData();
+    showToast(`Cadastro vinculado à ${invite.barbershop_name}.`);
+    return true;
+  } catch (error) {
+    setFeedback(authFeedback, `Não foi possível usar o convite: ${error.message}`, true);
+    openModal(authModal);
+    return false;
+  } finally {
+    inviteInProgress = false;
+  }
+}
+
+function setInviteLink(inputId, token) {
+  document.querySelector(`#${inputId}`).value = inviteSignupUrl(token);
 }
 
 function saveSession(value) {
@@ -137,9 +205,11 @@ function updateAuthButton() {
 }
 
 function updateIdentity() {
-  const name = profileRecord?.full_name || session?.user?.user_metadata?.full_name || session?.user?.email || 'Visitante';
   const roleLabels = {client:'Cliente',professional:'Profissional',manager:'Gestor',super_admin:'Super administrador'};
   const role = roleLabels[profileRecord?.role] || (session ? 'Conta autenticada' : 'Não conectado');
+  const accountName = profileRecord?.full_name || session?.user?.user_metadata?.full_name || session?.user?.email || 'Visitante';
+  const name = profileRecord?.role === 'manager' && managedShops.length
+    ? managedShops[0].name : accountName;
   const initials = name.split(/\s+/).slice(0,2).map(part => part[0]).join('').toUpperCase();
   document.querySelector('#welcome-heading').innerHTML = `${escapeText(session ? name : 'Visão da operação')} <span>✦</span>`;
   document.querySelector('#current-date').textContent = new Intl.DateTimeFormat('pt-BR', {
@@ -151,6 +221,7 @@ function updateIdentity() {
   document.querySelector('#profile-avatar').textContent = initials || '?';
   document.querySelector('.profile b').textContent = name;
   document.querySelector('.profile small').textContent = role;
+  document.querySelector('#add-shop').hidden = profileRecord?.role !== 'super_admin';
 }
 
 async function loadIdentity() {
@@ -162,23 +233,18 @@ async function loadIdentity() {
   try {
     const rows = await supabaseRequest(`profiles?select=full_name,role&id=eq.${encodeURIComponent(session.user.id)}&limit=1`);
     profileRecord = rows[0] || null;
+    if (profileRecord?.role === 'manager' || profileRecord?.role === 'super_admin') {
+      managedShops = await supabaseRequest('rpc/list_my_barbershops', {method:'POST',body:'{}'});
+    } else {
+      managedShops = [];
+    }
     updateIdentity();
   } catch (error) {
     profileRecord = null;
+    managedShops = [];
     updateIdentity();
     console.error('Falha ao carregar o perfil autenticado.', error);
   }
-}
-
-function updateIdentity() {
-  const name = session?.user?.user_metadata?.full_name || session?.user?.email || 'Visão da operação';
-  document.querySelector('#welcome-heading').innerHTML = `${escapeText(name)} <span>✦</span>`;
-  document.querySelector('#current-date').textContent = new Intl.DateTimeFormat('pt-BR', {
-    timeZone:'America/Sao_Paulo', weekday:'long', day:'2-digit', month:'long', year:'numeric'
-  }).format(new Date()).toLocaleUpperCase('pt-BR');
-  const profile = document.querySelector('.profile');
-  profile.querySelector('b').textContent = session?.user?.user_metadata?.full_name || session?.user?.email || 'Visitante';
-  profile.querySelector('small').textContent = session ? 'Conta autenticada' : 'Não conectado';
 }
 
 async function checkConnection() {
@@ -218,7 +284,8 @@ async function loadOperationalData() {
 async function loadDashboard() {
   const metrics = document.querySelectorAll('.metric-card strong');
   try {
-    const managedShops = await supabaseRequest('rpc/list_my_barbershops', {method:'POST',body:'{}'});
+    managedShops = await supabaseRequest('rpc/list_my_barbershops', {method:'POST',body:'{}'});
+    updateIdentity();
     const shopList = document.querySelector('.bottom-grid .shop-list');
     if (!managedShops.length) {
       metrics.forEach(element => { element.textContent = '—'; });
@@ -318,13 +385,23 @@ function renderUpcoming() {
 async function loadShopDirectory() {
   const container = document.querySelector('.shop-cards');
   try {
-    const rows = await supabaseRequest('barbershops?select=id,name,slug,phone,city,status&status=eq.active&order=name');
+    const rows = profileRecord?.role === 'manager' || profileRecord?.role === 'super_admin'
+      ? await supabaseRequest('rpc/list_my_barbershops', {method:'POST',body:'{}'})
+      : await supabaseRequest('barbershops?select=id,name,slug,phone,address,city,status&status=eq.active&order=name');
     const query = document.querySelector('#shop-search').value.trim().toLocaleLowerCase('pt-BR');
-    const filtered = rows.filter(shop => !query || `${shop.name} ${shop.city || ''}`.toLocaleLowerCase('pt-BR').includes(query));
+    const filtered = rows.filter(shop => !query || `${shop.name} ${shop.address || ''} ${shop.city || ''}`.toLocaleLowerCase('pt-BR').includes(query));
     document.querySelector('#shop-count').textContent = `${filtered.length} unidade(s) ativa(s)`;
     container.innerHTML = filtered.length
-      ? filtered.map(shop => `<article class="shop-card"><div class="shop-card-head"><span class="shop-logo">${escapeText(shop.name.slice(0,2).toUpperCase())}</span><span class="status active">Ativa</span></div><h3>${escapeText(shop.name)}</h3><p>${escapeText(shop.city || 'Cidade não informada')}${shop.phone ? ` · ${escapeText(shop.phone)}` : ''}</p><div class="shop-stats"><span><b>/${escapeText(shop.slug)}</b><small>link público da unidade</small></span></div></article>`).join('')
-      : '<article class="shop-card"><p>Nenhuma barbearia ativa encontrada.</p></article>';
+      ? filtered.map(shop => {
+        const canManage = ['manager','super_admin'].includes(profileRecord?.role);
+        const actions = canManage
+          ? `<div class="shop-actions"><button class="outline-btn share-client-link" data-shop-slug="${escapeText(shop.slug)}">Link para clientes</button><button class="outline-btn invite-professional" data-shop-id="${escapeText(shop.id)}" data-shop-name="${escapeText(shop.name)}">＋ Profissional</button></div>`
+          : '';
+        const managerLink = profileRecord?.role === 'super_admin'
+          ? `<button class="text-btn invite-manager" data-shop-id="${escapeText(shop.id)}" data-shop-name="${escapeText(shop.name)}">Gerar link para gestor</button>` : '';
+        return `<article class="shop-card"><div class="shop-card-head"><span class="shop-logo">${escapeText(shop.name.slice(0,2).toUpperCase())}</span><span class="status active">Ativa</span></div><h3>${escapeText(shop.name)}</h3><p>${escapeText(shop.address || shop.city || 'Endereço não informado')}${shop.phone ? ` · ${escapeText(shop.phone)}` : ''}</p><div class="shop-stats"><span><b>/${escapeText(shop.slug)}</b><small>link público da unidade</small></span></div>${actions}${managerLink}</article>`;
+      }).join('')
+      : `<article class="shop-card"><p>${profileRecord?.role === 'manager' || profileRecord?.role === 'super_admin' ? 'Nenhuma unidade vinculada a esta conta.' : 'Nenhuma barbearia ativa encontrada.'}</p></article>`;
   } catch (error) {
     container.innerHTML = `<article class="shop-card"><p>${escapeText(error.message)}</p></article>`;
   }
@@ -336,7 +413,9 @@ async function loadRegisters() {
   table.innerHTML = '<tr><td>Carregando...</td></tr>';
   try {
     if (!registerShops.length) {
-      registerShops = await supabaseRequest('barbershops?select=id,name&status=eq.active&order=name');
+      registerShops = profileRecord?.role === 'manager' || profileRecord?.role === 'super_admin'
+        ? await supabaseRequest('rpc/list_my_barbershops', {method:'POST',body:'{}'})
+        : await supabaseRequest('barbershops?select=id,name&status=eq.active&order=name');
       shopSelect.replaceChildren(...registerShops.map(shop => new Option(shop.name, shop.id)));
     }
     if (!shopSelect.value) {
@@ -394,6 +473,131 @@ document.querySelectorAll('[data-register-type]').forEach(button => button.addEv
   loadRegisters();
 }));
 
+document.querySelector('#add-shop').addEventListener('click', () => {
+  document.querySelector('#shop-form').reset();
+  document.querySelector('#shop-invite-result').hidden = true;
+  document.querySelector('#shop-form').hidden = false;
+  setFeedback(document.querySelector('#shop-feedback'), '');
+  openModal(shopModal);
+});
+
+document.querySelector('#shop-form').addEventListener('submit', async event => {
+  event.preventDefault();
+  const name = document.querySelector('#new-shop-name').value.trim();
+  const slug = slugify(name);
+  const submit = event.currentTarget.querySelector('button[type="submit"]');
+  if (!slug) {
+    setFeedback(document.querySelector('#shop-feedback'), 'Informe um nome válido para criar o link da unidade.', true);
+    return;
+  }
+  submit.disabled = true;
+  setFeedback(document.querySelector('#shop-feedback'), 'Criando barbearia e convite do gestor...');
+  try {
+    const result = await supabaseRequest('rpc/create_barbershop_with_manager_invite', {
+      method:'POST',
+      body:JSON.stringify({
+        p_name:name,
+        p_address:document.querySelector('#new-shop-address').value.trim(),
+        p_phone:document.querySelector('#new-shop-phone').value.trim(),
+        p_slug:slug
+      })
+    });
+    const created = Array.isArray(result) ? result[0] : result;
+    setInviteLink('shop-invite-link', created.invite_token);
+    document.querySelector('#shop-form').hidden = true;
+    document.querySelector('#shop-invite-result').hidden = false;
+    setFeedback(document.querySelector('#shop-feedback'), `Barbearia ${created.barbershop_name} criada. O convite do gestor expira em 14 dias.`);
+    managedShops = await supabaseRequest('rpc/list_my_barbershops', {method:'POST',body:'{}'});
+    updateIdentity();
+    registerShops = [];
+    await loadShopDirectory();
+    await loadDashboard();
+  } catch (error) {
+    setFeedback(document.querySelector('#shop-feedback'), `Não foi possível criar a barbearia: ${error.message}`, true);
+  } finally {
+    submit.disabled = false;
+  }
+});
+
+document.querySelector('.shop-cards').addEventListener('click', async event => {
+  const professionalButton = event.target.closest('.invite-professional');
+  const managerButton = event.target.closest('.invite-manager');
+  const clientButton = event.target.closest('.share-client-link');
+  if (clientButton) {
+    const url = new URL(window.location.href);
+    url.search = '';
+    url.hash = '';
+    url.searchParams.set('barbershop', clientButton.dataset.shopSlug);
+    url.searchParams.set('booking', '1');
+    document.querySelector('#client-booking-link').value = url.toString();
+    openModal(clientLinkModal);
+    return;
+  }
+  if (professionalButton) {
+    const form = document.querySelector('#invite-form');
+    form.reset();
+    form.hidden = false;
+    document.querySelector('#professional-invite-result').hidden = true;
+    document.querySelector('#invite-name-label').hidden = false;
+    document.querySelector('#invite-title').textContent = `Adicionar profissional · ${professionalButton.dataset.shopName}`;
+    document.querySelector('#invite-description').textContent = 'Gere um link individual de cadastro para a equipe. O link expira em 14 dias.';
+    form.dataset.shopId = professionalButton.dataset.shopId;
+    setFeedback(document.querySelector('#invite-feedback'), '');
+    openModal(inviteModal);
+    return;
+  }
+  if (managerButton) {
+    const button = managerButton;
+    button.disabled = true;
+    try {
+      document.querySelector('#professional-invite-result').hidden = true;
+      const token = await supabaseRequest('rpc/create_manager_invite', {
+        method:'POST', body:JSON.stringify({p_barbershop_id:button.dataset.shopId})
+      });
+      document.querySelector('#invite-title').textContent = `Convite de gestor · ${button.dataset.shopName}`;
+      document.querySelector('#invite-description').textContent = 'Envie este link ao responsável da unidade. É de uso único e expira em 14 dias.';
+      document.querySelector('#invite-form').hidden = true;
+      document.querySelector('#invite-name-label').hidden = true;
+      setInviteLink('professional-invite-link', token);
+      document.querySelector('#professional-invite-result').hidden = false;
+      openModal(inviteModal);
+    } catch (error) {
+      showToast(`Não foi possível criar o convite: ${error.message}`, true);
+    } finally {
+      button.disabled = false;
+    }
+  }
+});
+
+document.querySelector('#invite-form').addEventListener('submit', async event => {
+  event.preventDefault();
+  const form = event.currentTarget;
+  const submit = form.querySelector('button[type="submit"]');
+  submit.disabled = true;
+  setFeedback(document.querySelector('#invite-feedback'), 'Gerando convite...');
+  try {
+    const token = await supabaseRequest('rpc/create_professional_invite', {
+      method:'POST',
+      body:JSON.stringify({
+        p_barbershop_id:form.dataset.shopId,
+        p_professional_name:document.querySelector('#invite-name').value.trim()
+      })
+    });
+    setInviteLink('professional-invite-link', token);
+    form.hidden = true;
+    document.querySelector('#professional-invite-result').hidden = false;
+    setFeedback(document.querySelector('#invite-feedback'), 'Convite criado; compartilhe este link com o profissional.');
+  } catch (error) {
+    setFeedback(document.querySelector('#invite-feedback'), `Não foi possível gerar o convite: ${error.message}`, true);
+  } finally {
+    submit.disabled = false;
+  }
+});
+
+document.querySelectorAll('.copy-invite').forEach(button => button.addEventListener('click', () => {
+  copyInputValue(button.dataset.copyTarget, button);
+}));
+
 function openModal(element) {
   element.classList.add('open');
   element.setAttribute('aria-hidden', 'false');
@@ -416,14 +620,16 @@ document.querySelectorAll('#open-booking,#open-booking-agenda,#open-booking-list
 document.querySelectorAll('.modal-close,.modal-close-btn').forEach(button => button.addEventListener('click', () => {
   closeModal(bookingModal);
   closeModal(authModal);
+  closeModal(shopModal);
+  closeModal(inviteModal);
+  closeModal(clientLinkModal);
 }));
 document.querySelectorAll('.modal-backdrop').forEach(backdrop => backdrop.addEventListener('click', event => {
   if (event.target === backdrop) closeModal(backdrop);
 }));
 document.addEventListener('keydown', event => {
   if (event.key === 'Escape') {
-    closeModal(bookingModal);
-    closeModal(authModal);
+    [bookingModal,authModal,shopModal,inviteModal,clientLinkModal].forEach(closeModal);
   }
 });
 
@@ -433,6 +639,10 @@ async function loadShops() {
   try {
     shops = await supabaseRequest('barbershops?select=id,name,slug&status=eq.active&order=name');
     bookingShop.replaceChildren(...shops.map(shop => new Option(shop.name, shop.id)));
+    if (requestedShopSlug) {
+      const requestedShop = shops.find(shop => shop.slug === requestedShopSlug);
+      if (requestedShop) bookingShop.value = requestedShop.id;
+    }
     bookingShop.disabled = shops.length === 0;
     if (!shops.length) {
       setFeedback(bookingFeedback, 'Nenhuma barbearia ativa encontrada.');
@@ -542,9 +752,13 @@ function setAuthMode(mode) {
   authMode = mode;
   const signUp = mode === 'signup';
   document.querySelector('#auth-title').textContent = signUp ? 'Criar sua conta' : 'Entrar';
-  document.querySelector('#auth-description').textContent = signUp ? 'Cadastre-se para fazer agendamentos.' : 'Entre para confirmar seu agendamento.';
+  document.querySelector('#auth-description').textContent = pendingInviteToken
+    ? 'Você recebeu um convite seguro para se cadastrar e acessar uma barbearia.'
+    : signUp ? 'Cadastre-se para fazer agendamentos.' : 'Entre para confirmar seu agendamento.';
   document.querySelector('#auth-role-note').textContent = signUp
-    ? 'Sua escolha informa como você pretende usar o Barberly. Para acessar a gestão, a equipe precisa vincular sua conta à barbearia.'
+    ? pendingInviteToken
+      ? 'Ao concluir o cadastro, o convite vinculará sua conta somente à barbearia e à função autorizadas nele.'
+      : 'Sua escolha informa como você pretende usar o SuaBarbeariaAqui. Para acessar a gestão, a equipe precisa vincular sua conta à barbearia.'
     : 'A seleção não altera as permissões da sua conta. O acesso é determinado pelo perfil já autorizado no sistema.';
   document.querySelector('#auth-name-field').hidden = !signUp;
   document.querySelector('#auth-name').required = signUp;
@@ -571,6 +785,9 @@ document.querySelector('#auth-form').addEventListener('submit', async event => {
   const name = document.querySelector('#auth-name').value.trim();
   const accountType = document.querySelector('#auth-account-type').value;
   const endpoint = authMode === 'signup' ? 'signup' : 'token?grant_type=password';
+  const authUrl = authMode === 'signup'
+    ? `${authBase}/signup?redirect_to=${encodeURIComponent(window.location.href)}`
+    : `${authBase}/${endpoint}`;
   const payload = authMode === 'signup'
     ? {email,password,data:{full_name:name,intended_account_type:accountType}}
     : {email,password};
@@ -578,12 +795,13 @@ document.querySelector('#auth-form').addEventListener('submit', async event => {
   submit.disabled = true;
   setFeedback(authFeedback, authMode === 'signup' ? 'Criando sua conta...' : 'Entrando...');
   try {
-    const result = await request(`${authBase}/${endpoint}`, {method:'POST',body:JSON.stringify(payload)}, config.supabaseAnonKey);
+    const result = await request(authUrl, {method:'POST',body:JSON.stringify(payload)}, config.supabaseAnonKey);
     if (result.access_token) {
       saveSession(result);
-      closeModal(authModal);
+      const inviteClaimed = pendingInviteToken ? await processPendingInvite() : true;
+      if (inviteClaimed) closeModal(authModal);
       setFeedback(bookingFeedback, 'Conta conectada. Selecione um horário e confirme o agendamento.');
-      showToast('Login realizado.');
+      if (inviteClaimed) showToast('Login realizado.');
     } else {
       setAuthMode('signin');
       setFeedback(authFeedback, accountType === 'client'
@@ -596,6 +814,18 @@ document.querySelector('#auth-form').addEventListener('submit', async event => {
     submit.disabled = false;
   }
 });
+
+if (pendingInviteToken) {
+  document.querySelector('#auth-account-type').value = 'barbershop';
+  if (session?.access_token) {
+    processPendingInvite();
+  } else {
+    setAuthMode('signup');
+    openAuth();
+  }
+} else if (new URLSearchParams(window.location.search).get('booking') === '1') {
+  openBooking();
+}
 
 bookingForm.addEventListener('submit', async event => {
   event.preventDefault();
