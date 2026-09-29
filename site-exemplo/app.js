@@ -402,11 +402,18 @@ function renderAppointments() {
     return;
   }
   const statusLabels = {pending:'Pendente',confirmed:'Confirmado',completed:'Concluído',cancelled:'Cancelado',no_show:'Não compareceu'};
+  const canManageAppointments = ['manager','super_admin'].includes(profileRecord?.role);
   appointmentTable.innerHTML = result.map(item => {
     const canCancel = item.can_cancel && ['pending','confirmed'].includes(item.status);
     const statusClass = item.status === 'confirmed' || item.status === 'completed' ? 'confirmed'
       : item.status === 'cancelled' ? 'paused' : 'pending';
-    return `<tr><td><b>${escapeText(item.client_name)}</b></td><td>${localDate(item.starts_at)} · ${localTime(item.starts_at)}</td><td>${escapeText(item.professional_name)}</td><td>${escapeText(item.service_name)}</td><td><span class="status ${statusClass}">${statusLabels[item.status] || escapeText(item.status)}</span></td><td>${currency(item.price)}</td><td>${canCancel ? `<button class="cancel-appointment" data-appointment-id="${escapeText(item.id)}">Cancelar</button>` : ''}</td></tr>`;
+    const actions = [
+      canManageAppointments && item.status === 'pending'
+        ? `<button class="confirm-appointment" data-appointment-id="${escapeText(item.id)}">Confirmar</button>` : '',
+      canCancel
+        ? `<button class="cancel-appointment" data-appointment-id="${escapeText(item.id)}">Cancelar</button>` : ''
+    ].filter(Boolean).join(' ');
+    return `<tr><td><b>${escapeText(item.client_name)}</b></td><td>${localDate(item.starts_at)} · ${localTime(item.starts_at)}</td><td>${escapeText(item.professional_name)}</td><td>${escapeText(item.service_name)}</td><td><span class="status ${statusClass}">${statusLabels[item.status] || escapeText(item.status)}</span></td><td>${currency(item.price)}</td><td>${actions}</td></tr>`;
   }).join('');
 }
 
@@ -839,18 +846,15 @@ function openAuth() {
 
 document.querySelectorAll('#open-booking,#open-booking-agenda,#open-booking-list').forEach(button => button.addEventListener('click', openBooking));
 document.querySelectorAll('.modal-close,.modal-close-btn').forEach(button => button.addEventListener('click', () => {
-  closeModal(bookingModal);
-  closeModal(authModal);
-  closeModal(shopModal);
-  closeModal(inviteModal);
-  closeModal(clientLinkModal);
+  const modal = button.closest('.modal-backdrop');
+  if (modal) closeModal(modal);
 }));
 document.querySelectorAll('.modal-backdrop').forEach(backdrop => backdrop.addEventListener('click', event => {
   if (event.target === backdrop) closeModal(backdrop);
 }));
 document.addEventListener('keydown', event => {
   if (event.key === 'Escape') {
-    [bookingModal,authModal,shopModal,inviteModal,clientLinkModal].forEach(closeModal);
+    document.querySelectorAll('.modal-backdrop.open').forEach(closeModal);
   }
 });
 
@@ -1089,16 +1093,23 @@ bookingForm.addEventListener('submit', async event => {
 });
 
 appointmentTable.addEventListener('click', async event => {
-  const button = event.target.closest('.cancel-appointment');
+  const button = event.target.closest('.cancel-appointment,.confirm-appointment');
   if (!button) return;
   const appointment = appointmentsById.get(button.dataset.appointmentId);
-  if (!appointment || !window.confirm(`Cancelar o agendamento de ${appointment.client_name} em ${localDate(appointment.starts_at)} às ${localTime(appointment.starts_at)}?`)) return;
+  const appointmentId = button.dataset.appointmentId;
+  if (!appointment || !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(appointmentId)) {
+    showToast('Identificador de agendamento inválido. Atualize a lista e tente novamente.', true);
+    return;
+  }
+  const isConfirm = button.classList.contains('confirm-appointment');
+  const actionText = isConfirm ? 'Confirmar' : 'Cancelar';
+  if (!window.confirm(`${actionText} o agendamento de ${appointment.client_name} em ${localDate(appointment.starts_at)} às ${localTime(appointment.starts_at)}?`)) return;
   button.disabled = true;
   try {
-    await supabaseRequest('rpc/cancel_my_appointment', {
-      method:'POST', body:JSON.stringify({p_appointment_id:appointment.id})
+    await supabaseRequest(`rpc/${isConfirm ? 'confirm_my_appointment' : 'cancel_my_appointment'}`, {
+      method:'POST', body:JSON.stringify({p_appointment_id:appointmentId})
     });
-    showToast('Agendamento cancelado.');
+    showToast(isConfirm ? 'Agendamento confirmado.' : 'Agendamento cancelado.');
     await loadAppointments();
   } catch (error) {
     showToast(error.message, true);
